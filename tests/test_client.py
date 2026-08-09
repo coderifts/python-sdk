@@ -49,14 +49,14 @@ class TestClientConstruction(unittest.TestCase):
         self.assertEqual(
             c._session.headers["Authorization"], "Bearer cr_test_key"
         )
-        self.assertIn("coderifts-python-sdk/2.0.0", c._session.headers["User-Agent"])
+        self.assertIn("coderifts-python-sdk/3.0.0", c._session.headers["User-Agent"])
 
 
 class TestPreflightChangeSet(unittest.TestCase):
     def setUp(self):
         self.client = CodeRifts(api_key="cr_test_key")
 
-    def test_posts_artifacts_and_context(self):
+    def test_posts_artifacts_context_and_required_preflight_mode(self):
         payload = {
             "decision": "ALLOW",
             "execution_action": "CONTINUE",
@@ -81,6 +81,7 @@ class TestPreflightChangeSet(unittest.TestCase):
                         "after": "{}",
                     }
                 ],
+                preflight_mode="authorize",
                 context={"operation": "merge", "environment": "staging"},
             )
         req.assert_called_once_with(
@@ -95,6 +96,7 @@ class TestPreflightChangeSet(unittest.TestCase):
                         "after": "{}",
                     }
                 ],
+                "preflight_mode": "authorize",
                 "context": {"operation": "merge", "environment": "staging"},
             },
         )
@@ -103,14 +105,56 @@ class TestPreflightChangeSet(unittest.TestCase):
         self.assertEqual(result.breaking_changes, 0)
         self.assertEqual(result.decision_result.decision_id, "dec_x")
 
-    def test_context_optional(self):
+    def test_context_optional_but_preflight_mode_required(self):
         with patch.object(
             self.client, "_request", return_value={"decision": "ALLOW"}
         ) as req:
-            self.client.preflight_change_set(artifacts=[{"id": "a"}])
+            self.client.preflight_change_set(
+                artifacts=[{"id": "a"}], preflight_mode="analyze"
+            )
         self.assertEqual(
             req.call_args.kwargs["json"],
-            {"artifacts": [{"id": "a"}]},
+            {"artifacts": [{"id": "a"}], "preflight_mode": "analyze"},
+        )
+
+    def test_missing_preflight_mode_is_typeerror_keyword_only(self):
+        with self.assertRaises(TypeError):
+            self.client.preflight_change_set(artifacts=[{"id": "a"}])  # type: ignore[call-arg]
+
+    def test_invalid_preflight_mode_raises_valueerror(self):
+        with self.assertRaises(ValueError) as ctx:
+            self.client.preflight_change_set(
+                artifacts=[{"id": "a"}],
+                preflight_mode="maybe",  # type: ignore[arg-type]
+            )
+        self.assertIn("analyze", str(ctx.exception))
+        self.assertIn("authorize", str(ctx.exception))
+
+    def test_analyze_change_set_injects_mode(self):
+        with patch.object(
+            self.client, "_request", return_value={"analysis_outcome": "NO_BREAK_DETECTED"}
+        ) as req:
+            self.client.analyze_change_set(artifacts=[{"id": "a"}])
+        self.assertEqual(
+            req.call_args.kwargs["json"],
+            {"artifacts": [{"id": "a"}], "preflight_mode": "analyze"},
+        )
+
+    def test_authorize_change_set_injects_mode(self):
+        with patch.object(
+            self.client, "_request", return_value={"execution_action": "CONTINUE"}
+        ) as req:
+            self.client.authorize_change_set(
+                artifacts=[{"id": "a"}],
+                context={"operation": "merge"},
+            )
+        self.assertEqual(
+            req.call_args.kwargs["json"],
+            {
+                "artifacts": [{"id": "a"}],
+                "preflight_mode": "authorize",
+                "context": {"operation": "merge"},
+            },
         )
 
 

@@ -1,6 +1,6 @@
 """CodeRifts HTTP client — three canonical tools only."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import requests
 
@@ -8,7 +8,10 @@ from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
 
 DEFAULT_BASE_URL = "https://app.coderifts.com/api/v1"
 DEFAULT_TIMEOUT = 30
-SDK_VERSION = "2.0.0"
+SDK_VERSION = "3.0.0"
+
+PreflightMode = Literal["analyze", "authorize"]
+_PREFLIGHT_MODES = frozenset({"analyze", "authorize"})
 
 
 class _Response:
@@ -113,19 +116,28 @@ class CodeRifts:
     def preflight_change_set(
         self,
         artifacts: List[Dict[str, Any]],
+        *,
+        preflight_mode: PreflightMode,
         context: Optional[Dict[str, Any]] = None,
     ) -> _Response:
         """Preflight a complete base→head change set of contract artifacts.
 
         Maps to ``POST /api/v1/preflight``.
 
+        **Required** top-level ``preflight_mode`` (Decision Spec v2): ``'analyze'``
+        or ``'authorize'``. The server returns HTTP 400 if it is omitted. Prefer
+        :meth:`analyze_change_set` / :meth:`authorize_change_set` so the two
+        meanings cannot be mixed via a silent default.
+
         **What to branch on**
 
         * ``execution_action`` — the proceed signal (e.g. ``CONTINUE``). Use this
-          for automated go / no-go control flow.
+          for automated go / no-go control flow (authorize responses).
         * ``decision`` — the governance explanation label (e.g. ``ALLOW``,
           ``WARN``, ``REQUIRE_APPROVAL``, ``BLOCK``). Use this for logging and
           human-facing copy, not as the sole gate.
+        * On analyze responses, branch on ``analysis_outcome`` / risk fields —
+          analyze is informational, not permission.
 
         Observed response fields on a successful call include ``decision``,
         ``execution_action``, ``risk_score``, ``safe_for_agent``,
@@ -139,16 +151,60 @@ class CodeRifts:
             artifacts: Non-empty list of artifact dicts. Each entry must include
                 at least ``id``, ``type``, ``before``, and ``after`` (spec
                 strings or equivalent payload fields accepted by the API).
+            preflight_mode: Required keyword-only. ``'analyze'`` (risk-only) or
+                ``'authorize'`` (operation-bound; may mint a receipt). Top-level
+                on the request body — not nested under ``context``.
             context: Optional dict. Observed fields include ``operation`` and
-                ``environment`` (and further keys the API accepts).
+                ``environment`` (and further keys the API accepts). For
+                ``authorize``, the server requires a non-empty
+                ``context.operation``.
 
         Returns:
             Response wrapper over the full JSON body.
         """
-        body: Dict[str, Any] = {"artifacts": artifacts}
+        if preflight_mode not in _PREFLIGHT_MODES:
+            raise ValueError(
+                "preflight_mode must be 'analyze' or 'authorize' "
+                "(got {!r}); prefer analyze_change_set / authorize_change_set".format(
+                    preflight_mode
+                )
+            )
+        body: Dict[str, Any] = {
+            "artifacts": artifacts,
+            "preflight_mode": preflight_mode,
+        }
         if context is not None:
             body["context"] = context
         return self._post("/preflight", body)
+
+    def analyze_change_set(
+        self,
+        artifacts: List[Dict[str, Any]],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> _Response:
+        """Risk-only preflight (``preflight_mode='analyze'``).
+
+        Informational — not permission; does not mint an operation-bound receipt.
+        Delegates to :meth:`preflight_change_set`.
+        """
+        return self.preflight_change_set(
+            artifacts, preflight_mode="analyze", context=context
+        )
+
+    def authorize_change_set(
+        self,
+        artifacts: List[Dict[str, Any]],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> _Response:
+        """Operation-bound authorize preflight (``preflight_mode='authorize'``).
+
+        Requires a non-empty ``context.operation`` (e.g. ``merge``, ``deploy``,
+        ``tool_call``) — the server returns HTTP 400 otherwise. May mint a
+        signed receipt. Delegates to :meth:`preflight_change_set`.
+        """
+        return self.preflight_change_set(
+            artifacts, preflight_mode="authorize", context=context
+        )
 
     def verify_receipt(
         self,

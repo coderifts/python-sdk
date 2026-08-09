@@ -2,12 +2,13 @@
 
 Python SDK for [CodeRifts](https://coderifts.com) — API governance for AI agents.
 
-**v2.0.0** exposes only the three canonical tools (the same surface agents see by
-default over MCP). Other live REST endpoints may be added later, additively.
+**v3.0.0** exposes the three canonical tools (the same surface agents see by
+default over MCP). Decision Spec v2 requires top-level `preflight_mode` on
+preflight. Other live REST endpoints may be added later, additively.
 
 | Method | HTTP |
 |--------|------|
-| `preflight_change_set` | `POST /api/v1/preflight` |
+| `preflight_change_set` / `analyze_change_set` / `authorize_change_set` | `POST /api/v1/preflight` |
 | `verify_receipt` | `POST /api/v1/verify-receipt` |
 | `get_decision_details` | `POST /api/v1/decisions/lookup` |
 
@@ -27,28 +28,44 @@ from coderifts import CodeRifts, CodeRiftsError
 client = CodeRifts(api_key="cr_live_...")
 ```
 
-### `preflight_change_set`
+### `preflight_change_set` / `analyze_change_set` / `authorize_change_set`
 
-Branch on **`execution_action`** (proceed signal). Use **`decision`** for the
-explanation label.
+**Required** keyword-only `preflight_mode='analyze'|'authorize'` (Decision Spec v2;
+server returns HTTP 400 if omitted). Prefer the wrappers so the two meanings
+cannot be mixed.
+
+Branch on **`execution_action`** (proceed signal, authorize). Use **`decision`**
+for the explanation label. Analyze is informational (risk-only), not permission.
 
 ```python
 before = open("openapi-before.json").read()
 after = open("openapi-after.json").read()
+artifacts = [
+    {
+        "id": "spec-main",
+        "type": "openapi",
+        "before": before,
+        "after": after,
+    }
+]
 
-result = client.preflight_change_set(
-    artifacts=[
-        {
-            "id": "spec-main",
-            "type": "openapi",
-            "before": before,
-            "after": after,
-        }
-    ],
+# Risk-only
+risk = client.analyze_change_set(artifacts=artifacts)
+
+# Operation-bound authorize (requires context.operation; may mint a receipt)
+result = client.authorize_change_set(
+    artifacts=artifacts,
     context={
         "operation": "merge",
         "environment": "staging",
     },
+)
+
+# Or set the mode explicitly:
+result = client.preflight_change_set(
+    artifacts=artifacts,
+    preflight_mode="authorize",
+    context={"operation": "merge", "environment": "staging"},
 )
 
 print(result.execution_action)   # e.g. "CONTINUE"
@@ -105,7 +122,7 @@ print(stored.meta.source)
 from coderifts import CodeRifts, ApiError, AuthError, RateLimitError, CodeRiftsError
 
 try:
-    client.preflight_change_set(artifacts=[...])
+    client.authorize_change_set(artifacts=[...], context={"operation": "merge"})
 except AuthError as e:
     print("auth", e.message)
 except RateLimitError as e:
