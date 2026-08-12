@@ -218,6 +218,67 @@ class TestVerifyReceipt(unittest.TestCase):
         self.assertTrue(result.currently_authorized)
         self.assertEqual(result.authz_status, "VERIFIED_CURRENT")
 
+    def test_with_scope_bound_intent_fields(self):
+        """Scope-bound intent fields match server intended context (ID829)."""
+        payload = {
+            "valid": True,
+            "status": "VERIFIED_CURRENT",
+            "currently_authorized": True,
+            "authz_status": "VERIFIED_CURRENT",
+            "correlation_id": "cid",
+        }
+        indices = {"revocation": 0, "issuance": 1}
+        with patch.object(self.client, "_request", return_value=payload) as req:
+            result = self.client.verify_receipt(
+                token="tok.en",
+                operation="merge",
+                environment="staging",
+                target_id="sha256:t",
+                fingerprint="sha256:f",
+                audience="agents",
+                repository="acme/widgets",
+                branch="main",
+                pull_request=42,
+                indices=indices,
+            )
+        self.assertEqual(
+            req.call_args.kwargs["json"],
+            {
+                "token": "tok.en",
+                "operation": "merge",
+                "environment": "staging",
+                "target_id": "sha256:t",
+                "fingerprint": "sha256:f",
+                "audience": "agents",
+                "repository": "acme/widgets",
+                "branch": "main",
+                "pull_request": 42,
+                "indices": indices,
+            },
+        )
+        self.assertTrue(result.currently_authorized)
+
+    def test_pull_request_accepts_string(self):
+        payload = {
+            "valid": True,
+            "status": "VERIFIED_CURRENT",
+            "currently_authorized": None,
+            "correlation_id": "cid",
+        }
+        with patch.object(self.client, "_request", return_value=payload) as req:
+            self.client.verify_receipt(
+                token="tok.en",
+                repository="org/repo",
+                branch="feature/x",
+                pull_request="99",
+                indices={"n": 1},
+            )
+        body = req.call_args.kwargs["json"]
+        self.assertEqual(body["repository"], "org/repo")
+        self.assertEqual(body["branch"], "feature/x")
+        self.assertEqual(body["pull_request"], "99")
+        self.assertEqual(body["indices"], {"n": 1})
+
 
 class TestGetDecisionDetails(unittest.TestCase):
     def setUp(self):

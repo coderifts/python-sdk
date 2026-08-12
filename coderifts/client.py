@@ -1,6 +1,6 @@
 """CodeRifts HTTP client — three canonical tools only."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import requests
 
@@ -214,6 +214,10 @@ class CodeRifts:
         target_id: Optional[str] = None,
         fingerprint: Optional[str] = None,
         audience: Optional[str] = None,
+        repository: Optional[str] = None,
+        branch: Optional[str] = None,
+        pull_request: Optional[Union[str, int]] = None,
+        indices: Optional[Dict[str, Any]] = None,
         decision_result: Optional[Dict[str, Any]] = None,
     ) -> _Response:
         """Verify a signed chain-receipt and optionally evaluate authorization.
@@ -251,6 +255,12 @@ class CodeRifts:
             target_id: Optional target binding (e.g. artifact digest).
             fingerprint: Optional change / verdict fingerprint.
             audience: Optional audience claim.
+            repository: Optional repository scope for authorization binding.
+            branch: Optional branch scope for authorization binding.
+            pull_request: Optional pull-request identifier (``str`` or ``int``)
+                for authorization binding.
+            indices: Optional dict of lifecycle indices used in authorization
+                evaluation (server requires an object).
             decision_result: Optional body-hash-bound decision envelope from a
                 prior preflight or lookup; required for full scope evaluation.
 
@@ -268,6 +278,14 @@ class CodeRifts:
             body["fingerprint"] = fingerprint
         if audience is not None:
             body["audience"] = audience
+        if repository is not None:
+            body["repository"] = repository
+        if branch is not None:
+            body["branch"] = branch
+        if pull_request is not None:
+            body["pull_request"] = pull_request
+        if indices is not None:
+            body["indices"] = indices
         if decision_result is not None:
             body["decision_result"] = decision_result
         return self._post("/verify-receipt", body)
