@@ -14,6 +14,7 @@ from coderifts import (
     AuthError,
     CodeRifts,
     CodeRiftsError,
+    PreflightChangeSetContext,
     RateLimitError,
 )
 from coderifts.client import _Response
@@ -49,7 +50,7 @@ class TestClientConstruction(unittest.TestCase):
         self.assertEqual(
             c._session.headers["Authorization"], "Bearer cr_test_key"
         )
-        self.assertIn("coderifts-python-sdk/3.0.0", c._session.headers["User-Agent"])
+        self.assertIn("coderifts-python-sdk/3.1.0", c._session.headers["User-Agent"])
 
 
 class TestPreflightChangeSet(unittest.TestCase):
@@ -82,7 +83,12 @@ class TestPreflightChangeSet(unittest.TestCase):
                     }
                 ],
                 preflight_mode="authorize",
-                context={"operation": "merge", "environment": "staging"},
+                context={
+                    "operation": "merge",
+                    "environment": "staging",
+                    "base": "base-sha-aaa",
+                    "head": "head-sha-bbb",
+                },
             )
         req.assert_called_once_with(
             "POST",
@@ -97,13 +103,20 @@ class TestPreflightChangeSet(unittest.TestCase):
                     }
                 ],
                 "preflight_mode": "authorize",
-                "context": {"operation": "merge", "environment": "staging"},
+                "context": {
+                    "operation": "merge",
+                    "environment": "staging",
+                    "base": "base-sha-aaa",
+                    "head": "head-sha-bbb",
+                },
             },
         )
         self.assertEqual(result.execution_action, "CONTINUE")
         self.assertEqual(result.decision, "ALLOW")
         self.assertEqual(result.breaking_changes, 0)
         self.assertEqual(result.decision_result.decision_id, "dec_x")
+        self.assertIn("base", PreflightChangeSetContext.__annotations__)
+        self.assertIn("head", PreflightChangeSetContext.__annotations__)
 
     def test_context_optional_but_preflight_mode_required(self):
         with patch.object(
@@ -278,6 +291,28 @@ class TestVerifyReceipt(unittest.TestCase):
         self.assertEqual(body["branch"], "feature/x")
         self.assertEqual(body["pull_request"], "99")
         self.assertEqual(body["indices"], {"n": 1})
+
+    def test_with_base_head_intent(self):
+        """P0-5: documented verify_receipt contract includes base/head SHAs."""
+        payload = {
+            "valid": True,
+            "status": "VERIFIED_CURRENT",
+            "currently_authorized": False,
+            "authz_reason": "head_mismatch",
+            "correlation_id": "cid",
+        }
+        with patch.object(self.client, "_request", return_value=payload) as req:
+            result = self.client.verify_receipt(
+                token="tok.en",
+                operation="merge",
+                repository="acme/api",
+                base="base-sha-aaa",
+                head="head-CALLER-DIFFERS",
+            )
+        body = req.call_args.kwargs["json"]
+        self.assertEqual(body["base"], "base-sha-aaa")
+        self.assertEqual(body["head"], "head-CALLER-DIFFERS")
+        self.assertEqual(result.authz_reason, "head_mismatch")
 
 
 class TestGetDecisionDetails(unittest.TestCase):

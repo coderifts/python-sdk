@@ -1,6 +1,6 @@
 """CodeRifts HTTP client — three canonical tools only."""
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
 
 import requests
 
@@ -8,10 +8,27 @@ from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
 
 DEFAULT_BASE_URL = "https://app.coderifts.com/api/v1"
 DEFAULT_TIMEOUT = 30
-SDK_VERSION = "3.0.0"
+SDK_VERSION = "3.1.0"
 
 PreflightMode = Literal["analyze", "authorize"]
 _PREFLIGHT_MODES = frozenset({"analyze", "authorize"})
+
+
+class PreflightChangeSetContext(TypedDict, total=False):
+    """Documented preflight ``context`` contract (all fields optional).
+
+    ``operation`` is required by the server on ``authorize``. ``base`` / ``head``
+    are PR/commit SHAs when the preflight is source-bound.
+    """
+
+    operation: str
+    environment: str
+    repository: str
+    branch: str
+    pull_request: Union[str, int]
+    policy_profile: str
+    base: str
+    head: str
 
 
 class _Response:
@@ -118,7 +135,7 @@ class CodeRifts:
         artifacts: List[Dict[str, Any]],
         *,
         preflight_mode: PreflightMode,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[PreflightChangeSetContext] = None,
     ) -> _Response:
         """Preflight a complete base→head change set of contract artifacts.
 
@@ -154,9 +171,11 @@ class CodeRifts:
             preflight_mode: Required keyword-only. ``'analyze'`` (risk-only) or
                 ``'authorize'`` (operation-bound; may mint a receipt). Top-level
                 on the request body — not nested under ``context``.
-            context: Optional dict. Observed fields include ``operation`` and
-                ``environment`` (and further keys the API accepts). For
-                ``authorize``, the server requires a non-empty
+            context: Optional :class:`PreflightChangeSetContext`. Documented
+                fields: ``operation``, ``environment``, ``repository``,
+                ``branch``, ``pull_request``, ``policy_profile``, ``base``,
+                ``head`` (PR/commit SHAs). Extra keys the API accepts are still
+                forwarded. For ``authorize``, the server requires a non-empty
                 ``context.operation``.
 
         Returns:
@@ -180,7 +199,7 @@ class CodeRifts:
     def analyze_change_set(
         self,
         artifacts: List[Dict[str, Any]],
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[PreflightChangeSetContext] = None,
     ) -> _Response:
         """Risk-only preflight (``preflight_mode='analyze'``).
 
@@ -194,7 +213,7 @@ class CodeRifts:
     def authorize_change_set(
         self,
         artifacts: List[Dict[str, Any]],
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[PreflightChangeSetContext] = None,
     ) -> _Response:
         """Operation-bound authorize preflight (``preflight_mode='authorize'``).
 
@@ -217,6 +236,8 @@ class CodeRifts:
         repository: Optional[str] = None,
         branch: Optional[str] = None,
         pull_request: Optional[Union[str, int]] = None,
+        base: Optional[str] = None,
+        head: Optional[str] = None,
         indices: Optional[Dict[str, Any]] = None,
         decision_result: Optional[Dict[str, Any]] = None,
     ) -> _Response:
@@ -259,6 +280,10 @@ class CodeRifts:
             branch: Optional branch scope for authorization binding.
             pull_request: Optional pull-request identifier (``str`` or ``int``)
                 for authorization binding.
+            base: Optional intended base commit/ref SHA (signed-wins vs the
+                envelope).
+            head: Optional intended head commit/ref SHA (signed-wins vs the
+                envelope).
             indices: Optional dict of lifecycle indices used in authorization
                 evaluation (server requires an object).
             decision_result: Optional body-hash-bound decision envelope from a
@@ -284,6 +309,10 @@ class CodeRifts:
             body["branch"] = branch
         if pull_request is not None:
             body["pull_request"] = pull_request
+        if base is not None:
+            body["base"] = base
+        if head is not None:
+            body["head"] = head
         if indices is not None:
             body["indices"] = indices
         if decision_result is not None:

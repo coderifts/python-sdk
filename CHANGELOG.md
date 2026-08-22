@@ -2,6 +2,17 @@
 
 All notable changes to `coderifts-sdk` are documented here.
 
+## [3.1.0]
+
+Additive — optional `base` / `head` on the documented intended-context contract
+(parity with the REST Action / TS SDK / MCP schemas). Existing callers unchanged.
+
+### Added
+- **`PreflightChangeSetContext`** — typed context contract (`TypedDict`, all
+  fields optional) including ``base`` / ``head`` (PR/commit SHAs).
+- **`verify_receipt(..., base=None, head=None)`** — intended source SHAs
+  forwarded on the wire; the server signed-wins against the envelope.
+
 ## [3.0.0]
 
 **Breaking** — Decision Spec v2 alignment. The live server requires top-level

@@ -2,7 +2,7 @@
 
 Python SDK for [CodeRifts](https://coderifts.com) — API governance for AI agents.
 
-**v3.0.0** exposes the three canonical tools (the same surface agents see by
+**v3.1.0** exposes the three canonical tools (the same surface agents see by
 default over MCP). Decision Spec v2 requires top-level `preflight_mode` on
 preflight. Other live REST endpoints may be added later, additively.
 

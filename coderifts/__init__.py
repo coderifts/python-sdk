@@ -9,12 +9,13 @@ top-level ``preflight_mode``):
 * ``get_decision_details`` → ``POST /api/v1/decisions/lookup``
 """
 
-from .client import CodeRifts
+from .client import CodeRifts, PreflightChangeSetContext
 from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 __all__ = [
     "CodeRifts",
+    "PreflightChangeSetContext",
     "CodeRiftsError",
     "ApiError",
     "AuthError",
