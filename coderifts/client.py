@@ -146,6 +146,7 @@ class CodeRifts:
         *,
         preflight_mode: PreflightMode,
         context: Optional[PreflightChangeSetContext] = None,
+        include_execution_grant: Optional[bool] = None,
     ) -> _Response:
         """Preflight a complete base→head change set of contract artifacts.
 
@@ -187,6 +188,9 @@ class CodeRifts:
                 ``head`` (PR/commit SHAs). Extra keys the API accepts are still
                 forwarded. For ``authorize``, the server requires a non-empty
                 ``context.operation``.
+            include_execution_grant: Opt-in ``cr.exec.v1`` grant on authorize.
+                Default omitted. The Python client does not verify grants
+                offline (no Ed25519 dependency); use the app/SDK-TS kernel.
 
         Returns:
             Response wrapper over the full JSON body.
@@ -204,6 +208,8 @@ class CodeRifts:
         }
         if context is not None:
             body["context"] = context
+        if include_execution_grant is not None:
+            body["include_execution_grant"] = include_execution_grant
         return self._post("/preflight", body)
 
     def analyze_change_set(
@@ -224,6 +230,7 @@ class CodeRifts:
         self,
         artifacts: List[Dict[str, Any]],
         context: Optional[PreflightChangeSetContext] = None,
+        include_execution_grant: Optional[bool] = None,
     ) -> _Response:
         """Operation-bound authorize preflight (``preflight_mode='authorize'``).
 
@@ -232,7 +239,10 @@ class CodeRifts:
         signed receipt. Delegates to :meth:`preflight_change_set`.
         """
         return self.preflight_change_set(
-            artifacts, preflight_mode="authorize", context=context
+            artifacts,
+            preflight_mode="authorize",
+            context=context,
+            include_execution_grant=include_execution_grant,
         )
 
     def verify_receipt(

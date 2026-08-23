@@ -19,6 +19,12 @@ from .client import (
     is_receipt_expired,
 )
 from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
+from .execution_grant import (
+    GRANT_VERSION,
+    after_payload_canonical,
+    compute_scope_hash,
+    receipt_digest,
+)
 
 __version__ = "3.1.0"
 __all__ = [
@@ -33,4 +39,8 @@ __all__ = [
     "expiry_leeway_ms",
     "is_issued_in_future",
     "is_receipt_expired",
+    "GRANT_VERSION",
+    "after_payload_canonical",
+    "compute_scope_hash",
+    "receipt_digest",
 ]

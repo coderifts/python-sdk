@@ -23,6 +23,7 @@ from coderifts import (
     is_receipt_expired,
 )
 from coderifts.client import _Response
+from coderifts.execution_grant import GRANT_VERSION, compute_scope_hash, receipt_digest
 
 
 class TestResponseWrapper(unittest.TestCase):
@@ -478,6 +479,67 @@ class TestClockSkewLeeway(unittest.TestCase):
         now = 1_000_000_000_000
         self.assertFalse(is_issued_in_future(now + 10_000, now))
         self.assertTrue(is_issued_in_future(now + 40_000, now))
+
+
+class TestExecutionGrantHelpers(unittest.TestCase):
+    def test_scope_hash_stable(self):
+        self.assertEqual(GRANT_VERSION, "cr.exec.v1")
+        a = compute_scope_hash("merge", "t", '{"ok":true}')
+        b = compute_scope_hash("merge", "t", '{"ok":true}')
+        self.assertEqual(a, b)
+        self.assertTrue(a.startswith("sha256:"))
+        self.assertEqual(
+            a,
+            "sha256:bda9dac1974036a2e2de4e882a9207bed2dc6f0f4d360db5a60f877771172cbe",
+        )
+        self.assertEqual(
+            receipt_digest("receipt.token"),
+            "sha256:ceb96a1ffe90e672d769d6855873de498ef08ee694bf32f1ca5811833b26cf28",
+        )
+
+    def test_after_payload_canonical_sort_nul(self):
+        from coderifts.execution_grant import after_payload_canonical, spec_str
+
+        self.assertEqual(spec_str(None), "")
+        self.assertEqual(spec_str("yaml-a"), "yaml-a")
+        self.assertEqual(spec_str({"ok": True, "n": 1}), '{"ok":true,"n":1}')
+        artifacts = [
+            {"type": "openapi", "id": "b", "after": "yaml-b"},
+            {"type": "openapi", "id": "a", "after": "yaml-a"},
+        ]
+        self.assertEqual(after_payload_canonical(artifacts), "yaml-a\x1fyaml-b")
+
+    def test_preflight_forwards_include_execution_grant(self):
+        client = CodeRifts(api_key="cr_test_key")
+        with patch.object(client, "_request", return_value={"decision": "ALLOW"}) as req:
+            client.preflight_change_set(
+                artifacts=[{"id": "a"}],
+                preflight_mode="authorize",
+                context={"operation": "merge"},
+                include_execution_grant=True,
+            )
+        self.assertEqual(req.call_args.kwargs["json"]["include_execution_grant"], True)
+
+    def test_authorize_change_set_forwards_include_execution_grant(self):
+        client = CodeRifts(api_key="cr_test_key")
+        with patch.object(client, "_request", return_value={"decision": "ALLOW"}) as req:
+            client.authorize_change_set(
+                artifacts=[{"id": "a"}],
+                context={"operation": "merge"},
+                include_execution_grant=True,
+            )
+        self.assertEqual(req.call_args.kwargs["json"]["include_execution_grant"], True)
+        self.assertEqual(req.call_args.kwargs["json"]["preflight_mode"], "authorize")
+
+    def test_include_execution_grant_omitted_when_none(self):
+        client = CodeRifts(api_key="cr_test_key")
+        with patch.object(client, "_request", return_value={"decision": "ALLOW"}) as req:
+            client.preflight_change_set(
+                artifacts=[{"id": "a"}],
+                preflight_mode="authorize",
+                context={"operation": "merge"},
+            )
+        self.assertNotIn("include_execution_grant", req.call_args.kwargs["json"])
 
 
 if __name__ == "__main__":
