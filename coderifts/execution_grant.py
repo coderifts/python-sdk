@@ -10,6 +10,8 @@ import hashlib
 import json
 from typing import Any, Mapping, Optional, Sequence
 
+# 0x1F is US (Unit Separator); NUL is 0x00. This identifier is a misnomer retained to
+# avoid a cross-repo rename — the BYTE (\x1f) is what is normative, not the name.
 NUL = "\x1f"
 GRANT_VERSION = "cr.exec.v1"
 
