@@ -1,12 +1,15 @@
 """CodeRifts Python SDK — API governance for AI agents.
 
-v3 exposes the three canonical tools (Decision Spec v2 preflight requires
-top-level ``preflight_mode``):
+Canonical Decision Spec v2 tools:
 
 * ``preflight_change_set`` / ``analyze_change_set`` / ``authorize_change_set``
   → ``POST /api/v1/preflight``
 * ``verify_receipt`` → ``POST /api/v1/verify-receipt``
 * ``get_decision_details`` → ``POST /api/v1/decisions/lookup``
+
+Additional REST methods match ``@coderifts/sdk`` 3.3.0 (``diff``,
+``preflight_check``, ``score_mcp``, ``get_ledger``, ``simulate_policy``).
+Offline Ed25519 verification is intentionally not included (no crypto dep).
 """
 
 from .client import (
@@ -25,12 +28,28 @@ from .execution_grant import (
     compute_scope_hash,
     receipt_digest,
 )
+from .types import (
+    AnalysisOutcome,
+    AuthorizeChangeSetResponse,
+    AuthorizeReceiptKind,
+    BlastRadius,
+    Decision,
+    ExecutionAction,
+    PreflightMode,
+)
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 __all__ = [
     "CLOCK_SKEW_LEEWAY_MS",
     "CodeRifts",
     "PreflightChangeSetContext",
+    "PreflightMode",
+    "ExecutionAction",
+    "Decision",
+    "AuthorizeReceiptKind",
+    "AnalysisOutcome",
+    "AuthorizeChangeSetResponse",
+    "BlastRadius",
     "CodeRiftsError",
     "ApiError",
     "AuthError",

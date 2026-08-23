@@ -2,15 +2,30 @@
 
 Python SDK for [CodeRifts](https://coderifts.com) — API governance for AI agents.
 
-**v3.1.0** exposes the three canonical tools (the same surface agents see by
-default over MCP). Decision Spec v2 requires top-level `preflight_mode` on
-preflight. Other live REST endpoints may be added later, additively.
+**v3.2.0** (ID75) closes REST method parity with `@coderifts/sdk` 3.3.0.
+Decision Spec v2 still requires top-level `preflight_mode` on preflight.
+PyPI publishes are a separate, manual flow (do not `twine upload` from this
+checkout). Offline Ed25519 verification is **not** in this package (`requests`
+only) — use `@coderifts/sdk`, `coderifts-app`, or `receipt-verifier`.
 
-| Method | HTTP |
-|--------|------|
-| `preflight_change_set` / `analyze_change_set` / `authorize_change_set` | `POST /api/v1/preflight` |
-| `verify_receipt` | `POST /api/v1/verify-receipt` |
-| `get_decision_details` | `POST /api/v1/decisions/lookup` |
+## Surface vs TypeScript SDK
+
+| Capability | Python | TypeScript 3.3.0 | Notes |
+|------------|--------|------------------|-------|
+| `preflight_change_set` / `analyze_change_set` / `authorize_change_set` | yes | `preflightChangeSet` / `analyzeChangeSet` / `authorizeChangeSet` | `POST /api/v1/preflight` |
+| `verify_receipt` | yes | `verifyReceipt` | `POST /api/v1/verify-receipt` |
+| `get_decision_details` | yes | `getDecisionDetails` | `POST /api/v1/decisions/lookup` |
+| `preflight_check` | yes (3.2.0) | `preflightCheck` | `POST /api/v1/agent/preflight` |
+| `diff` | yes (3.2.0) | `diff` | `POST /api/v1/diff` |
+| `score_mcp` | yes (3.2.0) | `scoreMcp` | `POST /api/v1/agent-readiness-score` |
+| `get_ledger` | yes (3.2.0) | `getLedger` | `GET /api/v1/ledger` (`from_` → query `from`) |
+| `simulate_policy` | yes (3.2.0) | `simulatePolicy` | `POST /api/v1/policy-simulator` |
+| `explain_decision` | yes (3.2.0) | `explainDecision` | client-side; no HTTP |
+| `how_to_unblock` | yes (3.2.0) | `howToUnblock` | client-side; no HTTP |
+| `readDecision` | **no** | `readDecision` | Guard helper — TS-only by design (agent-guard / tool-table). |
+| `verifyExecutionGrant` | **no** | `verifyExecutionGrant` | Offline Ed25519. Python has no crypto dep; helpers `compute_scope_hash` / `receipt_digest` / `after_payload_canonical` only. |
+| waiver / deploy-gate / publish-gate | **no** | **no** | Not on the TS client. Not invented here. |
+| MCP client | **no** | **no** | Out of scope. |
 
 ## Installation
 
@@ -34,8 +49,13 @@ client = CodeRifts(api_key="cr_live_...")
 server returns HTTP 400 if omitted). Prefer the wrappers so the two meanings
 cannot be mixed.
 
-Branch on **`execution_action`** (proceed signal, authorize). Use **`decision`**
-for the explanation label. Analyze is informational (risk-only), not permission.
+Branch on **`execution_action`** (proceed signal, authorize). Closed set:
+`CONTINUE` | `CONTINUE_WITH_MONITORING` | `REQUEST_APPROVAL` | `STOP`.
+Unrecognised → treat as STOP. Use **`decision`** for the explanation label.
+Analyze is informational (risk-only), not permission.
+
+v2 fields on authorize: `receipt_kind` (`operation_authorization` | `NONE`),
+`chain_receipt`, optional `execution_grant`, `blast_radius` (counts, not a score).
 
 ```python
 before = open("openapi-before.json").read()
@@ -51,6 +71,7 @@ artifacts = [
 
 # Risk-only
 risk = client.analyze_change_set(artifacts=artifacts)
+print(risk.analysis_outcome, risk.receipt_kind)  # receipt_kind == "NONE"
 
 # Operation-bound authorize (requires context.operation; may mint a receipt)
 result = client.authorize_change_set(
@@ -59,22 +80,16 @@ result = client.authorize_change_set(
         "operation": "merge",
         "environment": "staging",
     },
-)
-
-# Or set the mode explicitly:
-result = client.preflight_change_set(
-    artifacts=artifacts,
-    preflight_mode="authorize",
-    context={"operation": "merge", "environment": "staging"},
+    include_execution_grant=True,  # opt-in cr.exec.v1 grant
 )
 
 print(result.execution_action)   # e.g. "CONTINUE"
 print(result.decision)           # e.g. "ALLOW"
-print(result.risk_score)
+print(result.receipt_kind)       # "operation_authorization" | "NONE"
 print(result.breaking_changes)   # integer count, not a list
-print(result.safe_for_agent)
+print(getattr(result, "execution_grant", None))  # grant token when opted in
+print(getattr(result, "blast_radius", None))
 
-# Signed receipt for later verification (when present)
 token = result.chain_receipt
 decision_id = result.decision_result.decision_id
 ```
@@ -86,6 +101,8 @@ A **valid signature is not authorization.** `currently_authorized` is
 Expiry uses 30s clock-skew leeway (`CLOCK_SKEW_LEEWAY_MS`); 0s for destructive
 operations in production when the intended context declares them. The SDK does
 not compare expiry locally — the server does.
+
+This is a **REST** verify. Offline grant verification is TS/app/`receipt-verifier`.
 
 ```python
 # Cryptographic check only
@@ -106,17 +123,33 @@ print(authz.currently_authorized)  # True / False once evaluable
 print(getattr(authz, "authz_status", None))
 ```
 
+Grant helpers (no Ed25519):
+
+```python
+from coderifts import compute_scope_hash, receipt_digest
+
+print(receipt_digest(token))
+print(compute_scope_hash("merge", "sha256:tgt", after))
+```
+
 ### `get_decision_details`
 
 Look up a stored decision by **`decision_id`** or **`fingerprint`**.
 
 ```python
 stored = client.get_decision_details(decision_id=decision_id)
-# or: stored = client.get_decision_details(fingerprint=result.verdict_fingerprint)
-
 print(stored.execution_action)
 print(stored.decision)
 print(stored.meta.source)
+```
+
+### Other REST methods (TS parity)
+
+```python
+client.diff(before=before, after=after)
+client.score_mcp(manifest={"tools": []})
+client.get_ledger(repo="acme/api", from_="2026-01-01", limit=20)
+client.simulate_policy(policy_yaml="rules: []", old_spec=before, new_spec=after)
 ```
 
 ## Error handling

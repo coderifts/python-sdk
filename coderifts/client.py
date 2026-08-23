@@ -1,15 +1,22 @@
-"""CodeRifts HTTP client — three canonical tools only."""
+"""CodeRifts HTTP client — REST parity with the TypeScript SDK (ID75).
+
+Canonical Decision Spec v2 tools remain ``preflight_change_set`` /
+``verify_receipt`` / ``get_decision_details``. Additional methods map 1:1 to
+the TypeScript ``CodeRifts`` class REST (and two client-side helpers).
+Offline Ed25519 verification is intentionally not in this package.
+"""
 
 import math
-from typing import Any, Dict, List, Literal, Mapping, Optional, TypedDict, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 import requests
 
 from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
+from .types import PreflightChangeSetContext, PreflightMode
 
 DEFAULT_BASE_URL = "https://app.coderifts.com/api/v1"
 DEFAULT_TIMEOUT = 30
-SDK_VERSION = "3.1.0"
+SDK_VERSION = "3.2.0"
 
 # ID104 — verification expiry leeway (ms). Server applies this; the SDK is an HTTP client.
 # `exp + leeway < now` → VERIFIED_EXPIRED. 0s when intended context declares destructive
@@ -17,28 +24,10 @@ SDK_VERSION = "3.1.0"
 # `operation_class` — never guess from operation labels.
 CLOCK_SKEW_LEEWAY_MS = 30_000
 
-PreflightMode = Literal["analyze", "authorize"]
 _PREFLIGHT_MODES = frozenset({"analyze", "authorize"})
 
-
-class PreflightChangeSetContext(TypedDict, total=False):
-    """Documented preflight ``context`` contract (all fields optional).
-
-    ``operation`` is required by the server on ``authorize``. ``base`` / ``head``
-    are PR/commit SHAs when the preflight is source-bound.
-    """
-
-    operation: str
-    environment: str
-    repository: str
-    branch: str
-    pull_request: Union[str, int]
-    policy_profile: str
-    base: str
-    head: str
-    target_id: str
-    fingerprint: str
-    audience: str
+# Re-export: existing imports of PreflightChangeSetContext from this module stay valid.
+__all__ = ["CodeRifts", "PreflightChangeSetContext", "PreflightMode", "_Response"]
 
 
 class _Response:
@@ -75,7 +64,7 @@ class _Response:
 
 
 class CodeRifts:
-    """CodeRifts API client for the three canonical governance tools.
+    """CodeRifts API client (REST parity with ``@coderifts/sdk`` 3.3.0).
 
     Args:
         api_key: Your CodeRifts API key (starts with ``cr_live_`` or ``cr_test_``).
@@ -138,7 +127,11 @@ class CodeRifts:
         data = self._request("POST", path, json=body)
         return _Response(data)
 
-    # ── public methods (canonical surface only) ───────────────
+    def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> _Response:
+        data = self._request("GET", path, params=params or None)
+        return _Response(data)
+
+    # ── public methods ────────────────────────────────────────
 
     def preflight_change_set(
         self,
@@ -147,6 +140,8 @@ class CodeRifts:
         preflight_mode: PreflightMode,
         context: Optional[PreflightChangeSetContext] = None,
         include_execution_grant: Optional[bool] = None,
+        previous_receipt: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> _Response:
         """Preflight a complete base→head change set of contract artifacts.
 
@@ -167,13 +162,15 @@ class CodeRifts:
         * On analyze responses, branch on ``analysis_outcome`` / risk fields —
           analyze is informational, not permission.
 
-        Observed response fields on a successful call include ``decision``,
-        ``execution_action``, ``risk_score``, ``safe_for_agent``,
-        ``breaking_changes`` (an integer count, not a list), ``patterns``,
-        ``requires_migration``, ``evidence_quality``, ``coderifts_version``,
-        ``timestamp``, ``decision_result``, ``control_envelope``,
-        ``chain_receipt``, and related analysis/meta fields. Nested objects are
-        available via attribute access on the returned wrapper.
+        Unrecognised ``execution_action`` values are not permission — treat as
+        STOP (fail closed).
+
+        Observed v2 fields (authorize) include ``execution_action``,
+        ``receipt_kind`` (``operation_authorization`` | ``NONE``),
+        ``chain_receipt``, optional ``execution_grant`` (when opted in),
+        ``blast_radius`` (ID27 counts), ``decision_result``, ``control_envelope``.
+        Analyze responses carry ``analysis_outcome``, ``receipt_kind: NONE``,
+        ``may_execute: false`` — not permission. Nested objects wrap.
 
         Args:
             artifacts: Non-empty list of artifact dicts. Each entry must include
@@ -191,6 +188,10 @@ class CodeRifts:
             include_execution_grant: Opt-in ``cr.exec.v1`` grant on authorize.
                 Default omitted. The Python client does not verify grants
                 offline (no Ed25519 dependency); use the app/SDK-TS kernel.
+            previous_receipt: Optional prior chain receipt to link (TS
+                ``previous_receipt``).
+            idempotency_key: Optional client idempotency key (TS
+                ``idempotency_key``).
 
         Returns:
             Response wrapper over the full JSON body.
@@ -210,12 +211,18 @@ class CodeRifts:
             body["context"] = context
         if include_execution_grant is not None:
             body["include_execution_grant"] = include_execution_grant
+        if previous_receipt is not None:
+            body["previous_receipt"] = previous_receipt
+        if idempotency_key is not None:
+            body["idempotency_key"] = idempotency_key
         return self._post("/preflight", body)
 
     def analyze_change_set(
         self,
         artifacts: List[Dict[str, Any]],
         context: Optional[PreflightChangeSetContext] = None,
+        previous_receipt: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> _Response:
         """Risk-only preflight (``preflight_mode='analyze'``).
 
@@ -223,7 +230,11 @@ class CodeRifts:
         Delegates to :meth:`preflight_change_set`.
         """
         return self.preflight_change_set(
-            artifacts, preflight_mode="analyze", context=context
+            artifacts,
+            preflight_mode="analyze",
+            context=context,
+            previous_receipt=previous_receipt,
+            idempotency_key=idempotency_key,
         )
 
     def authorize_change_set(
@@ -231,18 +242,25 @@ class CodeRifts:
         artifacts: List[Dict[str, Any]],
         context: Optional[PreflightChangeSetContext] = None,
         include_execution_grant: Optional[bool] = None,
+        previous_receipt: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> _Response:
         """Operation-bound authorize preflight (``preflight_mode='authorize'``).
 
         Requires a non-empty ``context.operation`` (e.g. ``merge``, ``deploy``,
         ``tool_call``) — the server returns HTTP 400 otherwise. May mint a
         signed receipt. Delegates to :meth:`preflight_change_set`.
+
+        Branch on ``execution_action`` (``CONTINUE`` | ``CONTINUE_WITH_MONITORING``
+        | ``REQUEST_APPROVAL`` | ``STOP``). Unrecognised → STOP.
         """
         return self.preflight_change_set(
             artifacts,
             preflight_mode="authorize",
             context=context,
             include_execution_grant=include_execution_grant,
+            previous_receipt=previous_receipt,
+            idempotency_key=idempotency_key,
         )
 
     def verify_receipt(
@@ -379,6 +397,237 @@ class CodeRifts:
         if fingerprint is not None:
             body["fingerprint"] = fingerprint
         return self._post("/decisions/lookup", body)
+
+    # ── additional REST (TS CodeRifts class parity) ───────────
+
+    def preflight_check(
+        self,
+        tool_name: str,
+        old_spec: str,
+        new_spec: str,
+    ) -> _Response:
+        """Single-tool agent preflight (TS ``preflightCheck``).
+
+        Maps to ``POST /api/v1/agent/preflight``. Legacy single-spec surface —
+        prefer :meth:`preflight_change_set` for Decision Spec v2.
+
+        Branch on ``decision``. The wrapper also sets ``safe`` (ALLOW/WARN)
+        matching the TypeScript client. Unrecognised decision → not safe.
+        """
+        raw = self._request(
+            "POST",
+            "/agent/preflight",
+            json={
+                "tool_name": tool_name,
+                "old_spec": old_spec,
+                "new_spec": new_spec,
+            },
+        )
+        decision = raw.get("decision") or "ALLOW"
+        body = dict(raw)
+        body["decision"] = decision
+        body["omega_api"] = raw.get("omega_api", 0)
+        body["safe"] = decision in ("ALLOW", "WARN")
+        body.setdefault("reflex_triggers", raw.get("reflex_triggers") or [])
+        body.setdefault("affected_tools", raw.get("affected_tools") or [])
+        return _Response(body)
+
+    def diff(
+        self,
+        before: str,
+        after: str,
+        branch_name: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> _Response:
+        """Full OpenAPI spec diff (TS ``diff``).
+
+        Maps to ``POST /api/v1/diff``.
+
+        Branch on ``execution_action`` when present (authorize-shaped bodies);
+        otherwise ``should_block`` / ``decision``. Unrecognised
+        ``execution_action`` → STOP.
+        """
+        body: Dict[str, Any] = {"before": before, "after": after}
+        if branch_name is not None:
+            body["branch_name"] = branch_name
+        if config is not None:
+            body["config"] = config
+        return self._post("/diff", body)
+
+    def score_mcp(self, manifest: Dict[str, Any]) -> _Response:
+        """Score an MCP manifest for agent safety (TS ``scoreMcp``).
+
+        Maps to ``POST /api/v1/agent-readiness-score`` with ``spec_type='mcp'``
+        (same body the TypeScript client sends).
+        """
+        return self._post(
+            "/agent-readiness-score",
+            {"spec": manifest, "spec_type": "mcp"},
+        )
+
+    def get_ledger(
+        self,
+        repo: Optional[str] = None,
+        decision: Optional[str] = None,
+        from_: Optional[str] = None,
+        to: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> _Response:
+        """Query compliance ledger entries (TS ``getLedger``).
+
+        Maps to ``GET /api/v1/ledger``. Python parameter ``from_`` is sent as
+        the query string key ``from`` (``from`` is a reserved word).
+        """
+        params: Dict[str, Any] = {}
+        if repo is not None:
+            params["repo"] = repo
+        if decision is not None:
+            params["decision"] = decision
+        if from_ is not None:
+            params["from"] = from_
+        if to is not None:
+            params["to"] = to
+        if limit is not None:
+            params["limit"] = limit
+        return self._get("/ledger", params=params or None)
+
+    def simulate_policy(
+        self,
+        policy_yaml: str,
+        old_spec: str,
+        new_spec: str,
+    ) -> _Response:
+        """Test a YAML policy against two OpenAPI specs (TS ``simulatePolicy``).
+
+        Maps to ``POST /api/v1/policy-simulator``.
+
+        Branch on ``effective_action``. Unrecognised values are not permission
+        — treat as STOP.
+        """
+        return self._post(
+            "/policy-simulator",
+            {
+                "policy_yaml": policy_yaml,
+                "old_spec": old_spec,
+                "new_spec": new_spec,
+            },
+        )
+
+    def explain_decision(
+        self,
+        omega_api: float,
+        decision: str,
+        reflex_triggers: Optional[List[Dict[str, Any]]] = None,
+        omega_components: Optional[Dict[str, Any]] = None,
+    ) -> _Response:
+        """Human-readable explanation of a decision (TS ``explainDecision``).
+
+        Computed client-side — no HTTP call, no invented endpoint.
+        """
+        components = []
+        if omega_components:
+            for name, value in omega_components.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    components.append(
+                        {
+                            "name": name,
+                            "value": value,
+                            "description": _describe_component(name, float(value)),
+                        }
+                    )
+        triggers = reflex_triggers or []
+        summary = "Decision: {} (Ω_API = {}).".format(decision, omega_api)
+        if triggers:
+            summary += " {} reflex rule(s) triggered.".format(len(triggers))
+        if decision == "BLOCK":
+            summary += " This change is blocked due to high risk."
+        elif decision == "REQUIRE_APPROVAL":
+            summary += " This change requires manual approval before merging."
+        elif decision == "WARN":
+            summary += " This change has warnings but can proceed."
+        else:
+            summary += " This change is safe to proceed."
+        return _Response({"summary": summary, "components": components})
+
+    def how_to_unblock(
+        self,
+        decision: str,
+        breaking_changes: Optional[List[Dict[str, Any]]] = None,
+        detected_patterns: Optional[List[Any]] = None,
+        reflex_triggers: Optional[List[Dict[str, Any]]] = None,
+    ) -> _Response:
+        """Actionable steps to resolve a BLOCK (TS ``howToUnblock``).
+
+        Computed client-side — no HTTP call, no invented endpoint.
+        ``detected_patterns`` is accepted for signature parity with TypeScript
+        (the TS client currently does not render it).
+        """
+        del detected_patterns  # signature parity; unused in the TS client too
+        actions: List[Dict[str, Any]] = []
+        step = 1
+        if decision != "BLOCK":
+            actions.append(
+                {
+                    "step": step,
+                    "description": 'Current decision is "{}" — no unblock needed.'.format(
+                        decision
+                    ),
+                }
+            )
+            return _Response({"actions": actions})
+        bcs = breaking_changes or []
+        if bcs:
+            example = "\n".join(
+                "# {} at {}: {}".format(
+                    bc.get("type", ""), bc.get("path", ""), bc.get("description", "")
+                )
+                for bc in bcs[:3]
+            )
+            actions.append(
+                {
+                    "step": step,
+                    "description": "Fix {} breaking change(s) in your spec.".format(
+                        len(bcs)
+                    ),
+                    "code_example": example,
+                }
+            )
+            step += 1
+        for trigger in reflex_triggers or []:
+            actions.append(
+                {
+                    "step": step,
+                    "description": "Resolve reflex rule: {}".format(
+                        trigger.get("rule", "")
+                    ),
+                }
+            )
+            step += 1
+        actions.append(
+            {
+                "step": step,
+                "description": (
+                    "Request a manual override via POST /api/v1/ledger/:id/override "
+                    "if this is an emergency."
+                ),
+            }
+        )
+        return _Response({"actions": actions})
+
+
+def _describe_component(name: str, value: float) -> str:
+    descriptions = {
+        "S_contract": "Contract severity score — measures how severe the breaking changes are",
+        "P_break": "Break probability — likelihood that downstream consumers will break",
+        "S_blast_eff": "Blast radius — how many consumers are affected",
+        "S_agent": "Agent safety score — risk to AI agent tool invocations",
+        "S_runtime": "Runtime impact — risk of runtime failures",
+        "ECI": "Ecosystem coupling index — how tightly coupled the API is",
+        "M_eff": "Migration effort — estimated effort to migrate consumers",
+        "D_contract": "Contract distance — semantic distance between old and new contracts",
+        "confidence_score": "Confidence in the analysis result",
+    }
+    return descriptions.get(name, "{} = {}".format(name, value))
 
 
 def _is_finite_number(value: object) -> bool:

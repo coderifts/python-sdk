@@ -13,8 +13,11 @@ from coderifts import (
     CLOCK_SKEW_LEEWAY_MS,
     ApiError,
     AuthError,
+    AuthorizeChangeSetResponse,
+    BlastRadius,
     CodeRifts,
     CodeRiftsError,
+    ExecutionAction,
     PreflightChangeSetContext,
     RateLimitError,
     declares_destructive_production,
@@ -56,7 +59,7 @@ class TestClientConstruction(unittest.TestCase):
         self.assertEqual(
             c._session.headers["Authorization"], "Bearer cr_test_key"
         )
-        self.assertIn("coderifts-python-sdk/3.1.0", c._session.headers["User-Agent"])
+        self.assertIn("coderifts-python-sdk/3.2.0", c._session.headers["User-Agent"])
 
 
 class TestPreflightChangeSet(unittest.TestCase):
@@ -540,6 +543,195 @@ class TestExecutionGrantHelpers(unittest.TestCase):
                 context={"operation": "merge"},
             )
         self.assertNotIn("include_execution_grant", req.call_args.kwargs["json"])
+
+
+class TestV2ResponseTyping(unittest.TestCase):
+    def test_authorize_typedict_names_v2_fields(self):
+        keys = AuthorizeChangeSetResponse.__annotations__
+        for field in (
+            "execution_action",
+            "receipt_kind",
+            "blast_radius",
+            "execution_grant",
+            "chain_receipt",
+            "decision",
+        ):
+            self.assertIn(field, keys)
+        self.assertIn("endpoints", BlastRadius.__annotations__)
+        self.assertEqual(
+            ExecutionAction.__args__,
+            ("CONTINUE", "CONTINUE_WITH_MONITORING", "REQUEST_APPROVAL", "STOP"),
+        )
+
+    def test_authorize_response_surfaces_v2_fields_from_wire(self):
+        client = CodeRifts(api_key="cr_test_key")
+        payload = {
+            "preflight_mode": "authorize",
+            "decision": "ALLOW",
+            "execution_action": "CONTINUE",
+            "receipt_kind": "operation_authorization",
+            "chain_receipt": "tok.en",
+            "execution_grant": "grant.tok",
+            "blast_radius": {
+                "endpoints": 1,
+                "fields": 2,
+                "params": 0,
+                "consumers_declared": 0,
+                "consumers_observed": 0,
+                "graph_source": "none",
+            },
+        }
+        with patch.object(client, "_request", return_value=payload):
+            result = client.authorize_change_set(
+                artifacts=[{"id": "a"}],
+                context={"operation": "merge"},
+                include_execution_grant=True,
+            )
+        self.assertEqual(result.receipt_kind, "operation_authorization")
+        self.assertEqual(result.execution_action, "CONTINUE")
+        self.assertEqual(result.execution_grant, "grant.tok")
+        self.assertEqual(result.blast_radius.endpoints, 1)
+
+    def test_previous_receipt_and_idempotency_key_forwarded(self):
+        client = CodeRifts(api_key="cr_test_key")
+        with patch.object(client, "_request", return_value={"decision": "ALLOW"}) as req:
+            client.preflight_change_set(
+                artifacts=[{"id": "a"}],
+                preflight_mode="authorize",
+                context={"operation": "merge"},
+                previous_receipt="prev.tok",
+                idempotency_key="idem-1",
+            )
+        body = req.call_args.kwargs["json"]
+        self.assertEqual(body["previous_receipt"], "prev.tok")
+        self.assertEqual(body["idempotency_key"], "idem-1")
+
+
+class TestParityRestMethods(unittest.TestCase):
+    def setUp(self):
+        self.client = CodeRifts(api_key="cr_test_key")
+
+    def test_preflight_check_posts_agent_preflight_and_sets_safe(self):
+        raw = {
+            "decision": "WARN",
+            "omega_api": 12,
+            "reflex_triggers": [],
+            "affected_tools": [],
+        }
+        with patch.object(self.client, "_request", return_value=raw) as req:
+            result = self.client.preflight_check(
+                tool_name="get_customer",
+                old_spec="{}",
+                new_spec="{}",
+            )
+        req.assert_called_once_with(
+            "POST",
+            "/agent/preflight",
+            json={
+                "tool_name": "get_customer",
+                "old_spec": "{}",
+                "new_spec": "{}",
+            },
+        )
+        self.assertTrue(result.safe)
+        self.assertEqual(result.decision, "WARN")
+
+    def test_diff_posts_before_after(self):
+        with patch.object(
+            self.client, "_request", return_value={"should_block": False, "risk_score": 0}
+        ) as req:
+            result = self.client.diff(before="a", after="b", branch_name="main")
+        req.assert_called_once_with(
+            "POST",
+            "/diff",
+            json={"before": "a", "after": "b", "branch_name": "main"},
+        )
+        self.assertFalse(result.should_block)
+
+    def test_score_mcp_sends_spec_type(self):
+        with patch.object(
+            self.client, "_request", return_value={"overall_score": 80, "band": "A"}
+        ) as req:
+            result = self.client.score_mcp(manifest={"tools": []})
+        req.assert_called_once_with(
+            "POST",
+            "/agent-readiness-score",
+            json={"spec": {"tools": []}, "spec_type": "mcp"},
+        )
+        self.assertEqual(result.overall_score, 80)
+
+    def test_get_ledger_get_query_from_underscore(self):
+        with patch.object(
+            self.client, "_request", return_value={"total": 0, "entries": []}
+        ) as req:
+            result = self.client.get_ledger(
+                repo="acme/api",
+                decision="BLOCK",
+                from_="2026-01-01",
+                to="2026-02-01",
+                limit=10,
+            )
+        req.assert_called_once_with(
+            "GET",
+            "/ledger",
+            params={
+                "repo": "acme/api",
+                "decision": "BLOCK",
+                "from": "2026-01-01",
+                "to": "2026-02-01",
+                "limit": 10,
+            },
+        )
+        self.assertEqual(result.total, 0)
+
+    def test_simulate_policy_posts_yaml_and_specs(self):
+        with patch.object(
+            self.client,
+            "_request",
+            return_value={"effective_action": "ALLOW", "matched_rules": []},
+        ) as req:
+            result = self.client.simulate_policy(
+                policy_yaml="rules: []",
+                old_spec="{}",
+                new_spec="{}",
+            )
+        req.assert_called_once_with(
+            "POST",
+            "/policy-simulator",
+            json={
+                "policy_yaml": "rules: []",
+                "old_spec": "{}",
+                "new_spec": "{}",
+            },
+        )
+        self.assertEqual(result.effective_action, "ALLOW")
+
+    def test_explain_decision_is_client_side(self):
+        with patch.object(self.client, "_request") as req:
+            result = self.client.explain_decision(
+                omega_api=0,
+                decision="ALLOW",
+                omega_components={"S_contract": 0},
+            )
+        req.assert_not_called()
+        self.assertIn("ALLOW", result.summary)
+        self.assertEqual(result.components[0]["name"], "S_contract")
+
+    def test_how_to_unblock_block_lists_steps(self):
+        result = self.client.how_to_unblock(
+            decision="BLOCK",
+            breaking_changes=[
+                {"type": "remove", "path": "/x", "description": "gone"},
+            ],
+            reflex_triggers=[{"rule": "auth-scope"}],
+        )
+        self.assertGreaterEqual(len(result.actions), 2)
+        self.assertEqual(result.actions[0]["step"], 1)
+
+    def test_how_to_unblock_non_block(self):
+        result = self.client.how_to_unblock(decision="ALLOW")
+        self.assertEqual(len(result.actions), 1)
+        self.assertIn("no unblock", result.actions[0]["description"])
 
 
 if __name__ == "__main__":

@@ -2,6 +2,26 @@
 
 All notable changes to `coderifts-sdk` are documented here.
 
+## [3.2.0]
+
+ID75 Python parity with `@coderifts/sdk` 3.3.0 REST surface. Minor bump (new
+public methods). **Not published** — PyPI remains Peter's manual flow
+(PyPI currently 1.0.1; this repo's version line is 3.x).
+
+### Added
+- REST: ``preflight_check``, ``diff``, ``score_mcp``, ``get_ledger``,
+  ``simulate_policy`` (same endpoints as the TypeScript client; ``from_`` →
+  query ``from``).
+- Client-side (no HTTP): ``explain_decision``, ``how_to_unblock``.
+- TypedDicts: ``AuthorizeChangeSetResponse`` (``execution_action``,
+  ``receipt_kind``, ``execution_grant``, ``blast_radius``), ``BlastRadius``,
+  closed ``ExecutionAction`` / ``Decision`` / ``AuthorizeReceiptKind``.
+- ``preflight_change_set`` forwards ``previous_receipt`` and ``idempotency_key``.
+
+### Not in this package (intentional)
+- Offline Ed25519 ``verifyExecutionGrant`` (no crypto dep).
+- ``readDecision`` / tool-table (TS + agent-guard).
+
 ## [3.1.0]
 
 Additive — optional `base` / `head` on the documented intended-context contract
