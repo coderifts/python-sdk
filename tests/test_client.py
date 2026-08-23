@@ -10,12 +10,17 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from coderifts import (
+    CLOCK_SKEW_LEEWAY_MS,
     ApiError,
     AuthError,
     CodeRifts,
     CodeRiftsError,
     PreflightChangeSetContext,
     RateLimitError,
+    declares_destructive_production,
+    expiry_leeway_ms,
+    is_issued_in_future,
+    is_receipt_expired,
 )
 from coderifts.client import _Response
 
@@ -117,6 +122,34 @@ class TestPreflightChangeSet(unittest.TestCase):
         self.assertEqual(result.decision_result.decision_id, "dec_x")
         self.assertIn("base", PreflightChangeSetContext.__annotations__)
         self.assertIn("head", PreflightChangeSetContext.__annotations__)
+        for key in (
+            "operation", "target_id", "environment", "fingerprint", "audience",
+            "repository", "branch", "pull_request", "base", "head",
+        ):
+            self.assertIn(key, PreflightChangeSetContext.__annotations__)
+
+    def test_preflight_sends_full_10_field_intent_context(self):
+        ctx = {
+            "operation": "merge",
+            "target_id": "svc-1",
+            "environment": "production",
+            "fingerprint": "sha256:abc",
+            "audience": "aud-1",
+            "repository": "acme/api",
+            "branch": "main",
+            "pull_request": 42,
+            "base": "base-sha",
+            "head": "head-sha",
+        }
+        with patch.object(
+            self.client, "_request", return_value={"decision": "ALLOW"}
+        ) as req:
+            self.client.preflight_change_set(
+                artifacts=[{"id": "a"}],
+                preflight_mode="authorize",
+                context=ctx,
+            )
+        self.assertEqual(req.call_args.kwargs["json"]["context"], ctx)
 
     def test_context_optional_but_preflight_mode_required(self):
         with patch.object(
@@ -413,6 +446,38 @@ class TestRequestErrorMapping(unittest.TestCase):
             with self.assertRaises(CodeRiftsError) as ctx:
                 self.client._request("POST", "/preflight", json={})
             self.assertEqual(ctx.exception.code, "timeout_error")
+
+
+class TestClockSkewLeeway(unittest.TestCase):
+    def test_constant_is_30000(self):
+        self.assertEqual(CLOCK_SKEW_LEEWAY_MS, 30_000)
+        self.assertEqual(expiry_leeway_ms(None), CLOCK_SKEW_LEEWAY_MS)
+
+    def test_exp_10s_past_is_current(self):
+        now = 1_000_000_000_000
+        self.assertFalse(is_receipt_expired(now - 10_000, now))
+
+    def test_exp_40s_past_is_expired(self):
+        now = 1_000_000_000_000
+        self.assertTrue(is_receipt_expired(now - 40_000, now))
+
+    def test_destructive_prod_not_guessed_1s_past_is_current(self):
+        now = 1_000_000_000_000
+        ctx = {"environment": "production", "operation": "deploy"}
+        self.assertFalse(declares_destructive_production(ctx))
+        self.assertEqual(expiry_leeway_ms(ctx), CLOCK_SKEW_LEEWAY_MS)
+        self.assertFalse(is_receipt_expired(now - 1_000, now, ctx))
+
+    def test_non_destructive_1s_past_is_current(self):
+        now = 1_000_000_000_000
+        self.assertFalse(
+            is_receipt_expired(now - 1_000, now, {"environment": "staging", "operation": "merge"})
+        )
+
+    def test_iat_leeway_other_side(self):
+        now = 1_000_000_000_000
+        self.assertFalse(is_issued_in_future(now + 10_000, now))
+        self.assertTrue(is_issued_in_future(now + 40_000, now))
 
 
 if __name__ == "__main__":

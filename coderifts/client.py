@@ -1,6 +1,7 @@
 """CodeRifts HTTP client — three canonical tools only."""
 
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
+import math
+from typing import Any, Dict, List, Literal, Mapping, Optional, TypedDict, Union
 
 import requests
 
@@ -9,6 +10,12 @@ from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
 DEFAULT_BASE_URL = "https://app.coderifts.com/api/v1"
 DEFAULT_TIMEOUT = 30
 SDK_VERSION = "3.1.0"
+
+# ID104 — verification expiry leeway (ms). Server applies this; the SDK is an HTTP client.
+# `exp + leeway < now` → VERIFIED_EXPIRED. 0s when intended context declares destructive
+# AND environment production. IntentContext has `environment` but no `destructive` /
+# `operation_class` — never guess from operation labels.
+CLOCK_SKEW_LEEWAY_MS = 30_000
 
 PreflightMode = Literal["analyze", "authorize"]
 _PREFLIGHT_MODES = frozenset({"analyze", "authorize"})
@@ -29,6 +36,9 @@ class PreflightChangeSetContext(TypedDict, total=False):
     policy_profile: str
     base: str
     head: str
+    target_id: str
+    fingerprint: str
+    audience: str
 
 
 class _Response:
@@ -247,8 +257,11 @@ class CodeRifts:
 
         **A valid signature is not authorization.** ``valid`` / ``status`` speak
         to cryptographic authenticity (and lifecycle flags reflected in
-        ``status``). Whether the receipt currently authorizes a stated intent is
-        a separate question.
+        ``status``). Expiry uses 30s clock-skew leeway
+        (``CLOCK_SKEW_LEEWAY_MS``); 0s for destructive operations in production
+        when the intended context declares them. The SDK does not compare expiry
+        locally — the server does. Whether the receipt currently authorizes a
+        stated intent is a separate question.
 
         **What to branch on**
 
@@ -356,3 +369,59 @@ class CodeRifts:
         if fingerprint is not None:
             body["fingerprint"] = fingerprint
         return self._post("/decisions/lookup", body)
+
+
+def _is_finite_number(value: object) -> bool:
+    """Match JS ``Number.isFinite``: real int/float only, not bool, not coerced strings."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
+
+
+def expiry_leeway_ms(context: Optional[Mapping[str, Any]] = None) -> int:
+    """Return verification expiry leeway in milliseconds.
+
+    0 only when intended context declares destructive AND production. Measured
+    IntentContext has ``environment`` but no ``destructive`` / ``operation_class``.
+    """
+    if declares_destructive_production(context):
+        return 0
+    return CLOCK_SKEW_LEEWAY_MS
+
+
+def declares_destructive_production(context: Optional[Mapping[str, Any]] = None) -> bool:
+    """True only when intended context DECLARES destructive AND production.
+
+    No such destructive field exists on IntentContext — always False.
+    """
+    if not isinstance(context, Mapping):
+        return False
+    if context.get("environment") != "production":
+        return False
+    return False
+
+
+def is_receipt_expired(
+    expires_at_ms: object,
+    now_ms: object,
+    context: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """``exp + leeway < now`` → expired (verification verdict only).
+
+    Non-finite timestamps cannot be judged (same as JS ``Number.isFinite`` miss).
+    """
+    if not _is_finite_number(expires_at_ms) or not _is_finite_number(now_ms):
+        return False
+    return (float(expires_at_ms) + expiry_leeway_ms(context)) < float(now_ms)
+
+
+def is_issued_in_future(
+    issued_at_ms: object,
+    now_ms: object,
+    context: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """Future-dated iat (`ts`): same 30s leeway on the other side. No nbf."""
+    if not _is_finite_number(issued_at_ms) or not _is_finite_number(now_ms):
+        return False
+    return float(issued_at_ms) > (float(now_ms) + expiry_leeway_ms(context))
+

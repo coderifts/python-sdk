@@ -83,6 +83,9 @@ decision_id = result.decision_result.decision_id
 
 A **valid signature is not authorization.** `currently_authorized` is
 `True` / `False` / `None` — `None` means authorization was not evaluated.
+Expiry uses 30s clock-skew leeway (`CLOCK_SKEW_LEEWAY_MS`); 0s for destructive
+operations in production when the intended context declares them. The SDK does
+not compare expiry locally — the server does.
 
 ```python
 # Cryptographic check only
