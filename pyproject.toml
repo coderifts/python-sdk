@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coderifts-sdk"
-version = "3.2.0"
+version = "3.3.0"
 description = "Python SDK for CodeRifts — API governance for AI agents"
 readme = "README.md"
 license = { text = "MIT" }

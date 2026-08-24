@@ -63,6 +63,51 @@ class _Response:
         return self._data
 
 
+def _assert_request_mode(artifacts, derivation, context):
+    """Fail fast on the two mutually exclusive /v1/preflight request modes.
+
+    Python cannot express this as a type-level union the way the TypeScript SDK does
+    (``CallerArtifactsRequest | ServerDerivedRequest``), so the same rule is enforced at
+    runtime here and mirrored in the TypedDicts and docstrings.
+
+    The SERVER remains the authority: this guard exists to fail fast with a readable message
+    naming the rule, not to duplicate policy. Every condition below is one the API already
+    rejects; the messages quote the server's own reason so the two never diverge in meaning.
+
+      mode A  artifacts=[...]                      derivation absent
+      mode B  derivation="server"                  artifacts absent, context needs
+                                                   repository + base + head
+
+    :raises ValueError: naming which rule was broken.
+    """
+    if derivation is not None and derivation != "server":
+        raise ValueError(
+            'derivation must be "server" when set (got {!r}); omit it to supply '
+            "artifacts[] yourself".format(derivation)
+        )
+    if derivation is None:
+        if not artifacts:
+            raise ValueError(
+                "artifacts[] is required when derivation is not set — supply the complete "
+                'base->head change set, or pass derivation="server" to have the server list it'
+            )
+        return
+    # derivation == "server"
+    if artifacts:
+        raise ValueError(
+            'derivation="server" forbids caller-supplied artifacts[] — one source of truth '
+            "per request (the server lists the change-set via the GitHub App installation)"
+        )
+    ctx = context or {}
+    missing = [k for k in ("repository", "base", "head") if not str(ctx.get(k) or "").strip()]
+    if missing:
+        raise ValueError(
+            'derivation="server" requires context.{} — the server returns 400 '
+            "derivation_requires_base_head without base AND head, and 400 INVALID_INPUT "
+            "without a parseable owner/repo".format(", context.".join(missing))
+        )
+
+
 class CodeRifts:
     """CodeRifts API client (REST parity with ``@coderifts/sdk`` 3.3.0).
 
@@ -135,11 +180,13 @@ class CodeRifts:
 
     def preflight_change_set(
         self,
-        artifacts: List[Dict[str, Any]],
+        artifacts: Optional[List[Dict[str, Any]]] = None,
         *,
         preflight_mode: PreflightMode,
+        derivation: Optional[str] = None,
         context: Optional[PreflightChangeSetContext] = None,
         include_execution_grant: Optional[bool] = None,
+        state_nonce: Optional[str] = None,
         previous_receipt: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> _Response:
@@ -203,14 +250,18 @@ class CodeRifts:
                     preflight_mode
                 )
             )
-        body: Dict[str, Any] = {
-            "artifacts": artifacts,
-            "preflight_mode": preflight_mode,
-        }
+        _assert_request_mode(artifacts, derivation, context)
+        body: Dict[str, Any] = {"preflight_mode": preflight_mode}
+        if derivation is not None:
+            body["derivation"] = derivation
+        else:
+            body["artifacts"] = artifacts
         if context is not None:
             body["context"] = context
         if include_execution_grant is not None:
             body["include_execution_grant"] = include_execution_grant
+        if state_nonce is not None:
+            body["state_nonce"] = state_nonce
         if previous_receipt is not None:
             body["previous_receipt"] = previous_receipt
         if idempotency_key is not None:
@@ -219,7 +270,10 @@ class CodeRifts:
 
     def analyze_change_set(
         self,
-        artifacts: List[Dict[str, Any]],
+        artifacts: Optional[List[Dict[str, Any]]] = None,
+        *,
+        derivation: Optional[str] = None,
+        state_nonce: Optional[str] = None,
         context: Optional[PreflightChangeSetContext] = None,
         previous_receipt: Optional[str] = None,
         idempotency_key: Optional[str] = None,
@@ -232,6 +286,8 @@ class CodeRifts:
         return self.preflight_change_set(
             artifacts,
             preflight_mode="analyze",
+            derivation=derivation,
+            state_nonce=state_nonce,
             context=context,
             previous_receipt=previous_receipt,
             idempotency_key=idempotency_key,
@@ -239,7 +295,10 @@ class CodeRifts:
 
     def authorize_change_set(
         self,
-        artifacts: List[Dict[str, Any]],
+        artifacts: Optional[List[Dict[str, Any]]] = None,
+        *,
+        derivation: Optional[str] = None,
+        state_nonce: Optional[str] = None,
         context: Optional[PreflightChangeSetContext] = None,
         include_execution_grant: Optional[bool] = None,
         previous_receipt: Optional[str] = None,
@@ -257,6 +316,8 @@ class CodeRifts:
         return self.preflight_change_set(
             artifacts,
             preflight_mode="authorize",
+            derivation=derivation,
+            state_nonce=state_nonce,
             context=context,
             include_execution_grant=include_execution_grant,
             previous_receipt=previous_receipt,

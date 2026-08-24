@@ -45,6 +45,31 @@ client = CodeRifts(api_key="cr_live_...")
 
 ### `preflight_change_set` / `analyze_change_set` / `authorize_change_set`
 
+#### Two request modes
+
+**Server-derived (the production path)** — the server lists the change set from the repository:
+
+```python
+result = client.authorize_change_set(
+    derivation="server",
+    context={"repository": "owner/repo", "base": "main", "head": "feature", "operation": "merge"},
+)
+```
+
+**Caller-supplied artifacts** — you assemble the complete base→head set yourself:
+
+```python
+result = client.authorize_change_set(
+    artifacts=[{"id": "api", "type": "openapi", "before": old_yaml, "after": new_yaml}],
+    context={"operation": "merge"},
+)
+```
+
+The two are mutually exclusive. Python cannot express that as a type-level union the way the
+TypeScript SDK does, so it is a runtime guard: mixing them raises a `ValueError` that names the
+rule, **before** any HTTP call. For an ATOMIC-profile grant, pass `state_nonce=` from your
+executor's state-challenge alongside `include_execution_grant=True`.
+
 **Required** keyword-only `preflight_mode='analyze'|'authorize'` (Decision Spec v2;
 server returns HTTP 400 if omitted). Prefer the wrappers so the two meanings
 cannot be mixed.

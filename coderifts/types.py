@@ -255,3 +255,42 @@ class VerifyReceiptResponse(TypedDict, total=False):
     authz_reason: str
     authz_state: str
     binding_level: str
+
+
+# ── Audit P1-2: server-derivation + ATOMIC-profile response shapes ───────────────
+# Python cannot express the two request modes as a type-level union (see client.py
+# _assert_request_mode); these TypedDicts mirror the MEANING for editors and readers.
+
+#: Completeness modes the server may author. SERVER_DERIVED appears only when
+#: derivation:"server" ran; the caller can never set it.
+COMPLETENESS_MODES = (
+    "SERVER_DERIVED",
+    "BOUND_ATTESTED",
+    "ATTESTED_UNVERIFIED",
+    "UNBOUND",
+    "DIVERGED",
+    "UNESTABLISHABLE",
+)
+
+
+class DerivationEnvelope(TypedDict, total=False):
+    """Resolved compare identity — present ONLY on the derivation:"server" path.
+
+    ABSENT (not null) on the caller-artifacts path so ``body_hash`` stays byte-identical.
+    Lives inside the decision_result envelope. Producer: coderifts-app src/change-set.js:1181.
+    """
+
+    source: str
+    base_sha: str
+    head_sha: str
+
+
+class AuthorityEnvelope(TypedDict, total=False):
+    """WHO was authorized (ID963). ``binding_proven_at`` appears only when bound.
+
+    Producer: coderifts-app src/change-set.js:752.
+    """
+
+    audience: Optional[str]
+    tenant_scope: str  # "bound" | "unbound"
+    binding_proven_at: Optional[str]

@@ -2,6 +2,28 @@
 
 All notable changes to `coderifts-sdk` are documented here.
 
+## [3.3.0]
+
+Audit P1-2 — server-derivation and the ATOMIC-grant nonce are now reachable from the SDK.
+Additive: existing caller-artifacts code is unchanged.
+
+### Added
+- **`derivation="server"` mode** on `preflight_change_set` / `analyze_change_set` /
+  `authorize_change_set`. `artifacts` is now optional; supply either it or `derivation`.
+- **`state_nonce=` keyword** — the ATOMIC-profile nonce is a REQUEST INPUT, not a server echo.
+  Obtain it from your executor's state-challenge; with `include_execution_grant` the server
+  copies it into the signed grant. Absent => BEARER grant.
+- **Runtime mode guard** raising a `ValueError` that NAMES the broken rule. Python cannot express
+  the two modes as a type-level union the way the TypeScript SDK does
+  (`CallerArtifactsRequest | ServerDerivedRequest`), so the rule is enforced at runtime and
+  mirrored in the TypedDicts and docstrings. Misuse is refused BEFORE any HTTP call.
+- **Response types** `DerivationEnvelope`, `AuthorityEnvelope`, and `COMPLETENESS_MODES`
+  (including `SERVER_DERIVED`).
+
+### Notes
+- The server remains the authority. The guard fails fast with a readable message; it does not
+  duplicate policy. Every condition it raises on is one the API already rejects.
+
 ## [3.2.0]
 
 ID75 Python parity with `@coderifts/sdk` 3.3.0 REST surface. Minor bump (new
