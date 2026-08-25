@@ -12,7 +12,11 @@ from typing import Any, Dict, List, Mapping, Optional, Union
 import requests
 
 from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
-from .decision import UNREADABLE_DECISION, read_decision
+from .decision import (
+    UNREADABLE_DECISION,
+    has_explicit_execution_action,
+    read_decision,
+)
 from .types import PreflightChangeSetContext, PreflightMode
 
 DEFAULT_BASE_URL = "https://app.coderifts.com/api/v1"
@@ -506,9 +510,15 @@ class CodeRifts:
 
         Branch on ``execution_action`` via
         :func:`~coderifts.decision.read_decision` — measured live, this endpoint
-        emits it top-level. The wrapper also sets the legacy ``safe`` flag from
-        ``decision`` (ALLOW/WARN) for TypeScript parity; ``safe`` is legacy and
-        is not the control input.
+        emits it top-level.
+
+        3.5.0 — BREAKING, deliberate. ``safe`` is a permission and is now
+        GRANTED, not merely un-refused: it is true only when the response
+        carried an explicit ``CONTINUE``. An absent, unknown or unrecognised
+        action reads as ``STOP`` and ``safe`` is ``False``. The pre-3.5.0
+        mapper manufactured an ``ALLOW`` from an omitted field, so a server
+        that said nothing produced ``safe=True``. ``decision`` is now passed
+        through exactly as received — the SDK computes no decision of its own.
         """
         raw = self._request(
             "POST",
@@ -519,11 +529,13 @@ class CodeRifts:
                 "new_spec": new_spec,
             },
         )
-        decision = raw.get("decision") or "ALLOW"
+        read = read_decision(raw)
         body = dict(raw)
-        body["decision"] = decision
         body["omega_api"] = raw.get("omega_api", 0)
-        body["safe"] = decision in ("ALLOW", "WARN")
+        body["safe"] = (
+            read.execution_action == "CONTINUE"
+            and has_explicit_execution_action(raw)
+        )
         body.setdefault("reflex_triggers", raw.get("reflex_triggers") or [])
         body.setdefault("affected_tools", raw.get("affected_tools") or [])
         return _Response(body)

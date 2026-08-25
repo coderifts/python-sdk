@@ -612,6 +612,8 @@ class TestParityRestMethods(unittest.TestCase):
         self.client = CodeRifts(api_key="cr_test_key")
 
     def test_preflight_check_posts_agent_preflight_and_sets_safe(self):
+        # 3.5.0: `decision: WARN` alone no longer grants `safe`. The label is
+        # still passed through; the permission is not.
         raw = {
             "decision": "WARN",
             "omega_api": 12,
@@ -633,7 +635,7 @@ class TestParityRestMethods(unittest.TestCase):
                 "new_spec": "{}",
             },
         )
-        self.assertTrue(result.safe)
+        self.assertFalse(result.safe)
         self.assertEqual(result.decision, "WARN")
 
     def test_diff_posts_before_after(self):
@@ -751,3 +753,83 @@ class TestParityRestMethods(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── 3.5.0 fail-closed ``safe`` (BREAKING) ───────────────────────────────────
+# This table is duplicated verbatim in the TypeScript SDK
+# (test/client.test.js, SAFE_PARITY_TABLE). Same ids, same inputs, same
+# expected ``safe``. If one side changes, the two tables stop matching.
+SAFE_PARITY_TABLE = [
+    ("absent-decision-and-action", {"omega_api": 0}, False),
+    ("legacy-decision-only-allow", {"decision": "ALLOW"}, False),
+    ("action-continue", {"execution_action": "CONTINUE"}, True),
+    (
+        "action-continue-with-monitoring",
+        {"execution_action": "CONTINUE_WITH_MONITORING"},
+        False,
+    ),
+    ("action-request-approval", {"execution_action": "REQUEST_APPROVAL"}, False),
+    ("action-stop", {"execution_action": "STOP"}, False),
+    (
+        "unrecognised-action",
+        {"execution_action": "PROBABLY_FINE", "decision": "ALLOW"},
+        False,
+    ),
+]
+
+
+class TestPreflightCheckFailClosedSafe(unittest.TestCase):
+    """3.5.0: ``safe`` is granted, not merely un-refused."""
+
+    def setUp(self):
+        self.client = CodeRifts(api_key="cr_test_key")
+
+    def _safe(self, raw):
+        with patch.object(self.client, "_request", return_value=raw):
+            return self.client.preflight_check(
+                tool_name="t", old_spec="a", new_spec="b"
+            )
+
+    def test_absent_decision_field_yields_safe_false(self):
+        """The exact pre-3.5.0 defect, as a permanent regression guard.
+
+        The server omits ``decision``, the SDK manufactured ``ALLOW``, and
+        ``safe`` came back True.
+        """
+        result = self._safe({"omega_api": 0, "reflex_triggers": [], "affected_tools": []})
+        self.assertFalse(result.safe)
+        self.assertNotIn("decision", result.to_dict())
+
+    def test_pre_350_fail_open_behaviour_is_gone(self):
+        for raw in ({}, {"omega_api": 0}, {"reflex_triggers": []}, {"decision": None}, {"decision": ""}):
+            with self.subTest(raw=raw):
+                self.assertIsNot(self._safe(raw).safe, True)
+
+    def test_each_canonical_action_maps_correctly(self):
+        expected = {
+            "CONTINUE": True,
+            "CONTINUE_WITH_MONITORING": False,
+            "REQUEST_APPROVAL": False,
+            "STOP": False,
+        }
+        for action, want in expected.items():
+            with self.subTest(action=action):
+                self.assertEqual(self._safe({"execution_action": action}).safe, want)
+
+    def test_unrecognised_action_yields_safe_false(self):
+        for action in ("PROBABLY_FINE", "continue", "CONTINUE_WITH_MONITORNG", None, 7, {}):
+            with self.subTest(action=action):
+                raw = {"execution_action": action, "decision": "ALLOW"}
+                self.assertFalse(self._safe(raw).safe)
+
+    def test_legacy_decision_only_does_not_grant_safe(self):
+        for d in ("ALLOW", "WARN", "REQUIRE_APPROVAL", "BLOCK"):
+            with self.subTest(decision=d):
+                result = self._safe({"decision": d})
+                self.assertFalse(result.safe)
+                self.assertEqual(result.decision, d, "server label still passed through")
+
+    def test_safe_parity_table_matches_typescript(self):
+        for tid, raw, want in SAFE_PARITY_TABLE:
+            with self.subTest(case=tid):
+                self.assertEqual(self._safe(raw).safe, want)

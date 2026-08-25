@@ -2,6 +2,76 @@
 
 All notable changes to `coderifts-sdk` are documented here.
 
+## [3.5.0]
+
+**BREAKING, and deliberately so.** `preflight_check().safe` changes from
+fail-open to fail-closed. This is the last fail-open in the SDK.
+
+### The defect
+
+`preflight_check` did this:
+
+```python
+decision = raw.get("decision") or "ALLOW"        # an omitted field became ALLOW
+body["safe"] = decision in ("ALLOW", "WARN")
+```
+
+A server that returned no `decision` produced `safe=True`. Callers gate on this
+(`if res.safe: deploy()`), so a silent server manufactured a permission. Unlike
+the advisory helpers, which produced misleading *prose*, this produced a
+permission-shaped boolean in the wrong direction.
+
+### Why breaking rather than deprecate-and-remove
+
+Peter's call, and the reasoning is worth recording:
+
+1. **No evidence of an external consumer gating on `safe`.** Telemetry only
+   started yesterday, so a deprecation window would be a guess dressed as
+   caution.
+2. **This release closes a class, not a case.** Today's work removed the
+   fail-open class across both SDKs. Leaving one documented exception recreates
+   the "almost fixed" state that two audits already found.
+3. **The failure direction is asymmetric.** A halted pipeline is repairable in
+   minutes. A silently-passed deploy is not. When the two error costs are that
+   unequal, the default belongs on the recoverable side.
+
+### Changed
+
+- **`safe` is now granted, not merely un-refused.** It is derived from
+  `read_decision` and is `True` only when the response carried an explicit
+  `CONTINUE`. Absent, unknown, unrecognised or unreadable input yields `False`.
+- **A legacy `decision`-only response no longer grants `safe`.** New exported
+  predicate `has_explicit_execution_action` draws the line between *reading* a
+  decision and *granting* a permission, and keeps `safe` byte-identical to the
+  TypeScript SDK.
+- **The fabricated `decision` local is gone.** `decision` is now passed through
+  exactly as the server sent it, so it is absent from the response when the
+  server omitted it (it was previously always present, because it was invented).
+- No new vocabulary: the closed `EXECUTION_ACTIONS` set and
+  `UNREADABLE_DECISION` from 3.4.0 are reused unchanged.
+
+### Migration
+
+Read the decision via `read_decision` and branch on `execution_action`. `safe`
+now means "we verified it is safe", not "we did not see a reason it is not" — if
+you gated on `safe`, a server that omits the field will now stop you instead of
+waving you through.
+
+```python
+read = read_decision(res)
+if read.execution_action == "CONTINUE":
+    deploy()
+```
+
+Parity: identical semantics and failure direction to `@coderifts/sdk` 3.9.0; the
+`safe` parity table is duplicated verbatim in both test suites.
+
+### Note on 3.4.0
+
+3.4.0 shipped `read_decision` (the fail-closed reader this release builds on) but
+was never given a CHANGELOG entry. Recorded here so the gap between 3.3.0 and
+3.5.0 is not mistaken for a missing release.
+
 ## [3.3.0]
 
 Audit P1-2 — server-derivation and the ATOMIC-grant nonce are now reachable from the SDK.

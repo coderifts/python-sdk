@@ -47,7 +47,7 @@ from .types import (
     PreflightMode,
 )
 
-__version__ = "3.4.0"
+__version__ = "3.5.0"
 __all__ = [
     "CLOCK_SKEW_LEEWAY_MS",
     "CodeRifts",

@@ -21,6 +21,7 @@ __all__ = [
     "EXECUTION_ACTIONS",
     "UNREADABLE_DECISION",
     "DecisionRead",
+    "has_explicit_execution_action",
     "read_decision",
 ]
 
@@ -86,6 +87,31 @@ def _is_execution_action(value: Any) -> bool:
 def _decision_of(source: Dict[str, Any]) -> Optional[str]:
     value = source.get("decision")
     return value if isinstance(value, str) else None
+
+
+def has_explicit_execution_action(payload: Any) -> bool:
+    """True when the payload carries an EXPLICIT execution action.
+
+    Envelope-first, then top-level, drawn from :data:`EXECUTION_ACTIONS`.
+
+    This exists so a permission-shaped value is never granted by a legacy
+    ``decision`` label. ``decision`` is the governance explanation label;
+    letting it grant permission is the branch-on-decision pattern this SDK
+    removes. Reading a decision may fall back; GRANTING one may not.
+
+    Mirrors ``hasExplicitExecutionAction`` in ``@coderifts/sdk``.
+
+    Never raises.
+    """
+    data = _as_dict(payload)
+    if data is None:
+        return False
+    envelope = data.get("decision_result")
+    if isinstance(envelope, dict) and _is_execution_action(
+        envelope.get("execution_action")
+    ):
+        return True
+    return _is_execution_action(data.get("execution_action"))
 
 
 def read_decision(payload: Any) -> DecisionRead:
