@@ -25,7 +25,7 @@ from coderifts import (
     is_issued_in_future,
     is_receipt_expired,
 )
-from coderifts.client import _Response
+from coderifts.client import _Response, SDK_VERSION
 from coderifts.execution_grant import GRANT_VERSION, compute_scope_hash, receipt_digest
 
 
@@ -59,7 +59,7 @@ class TestClientConstruction(unittest.TestCase):
         self.assertEqual(
             c._session.headers["Authorization"], "Bearer cr_test_key"
         )
-        self.assertIn("coderifts-python-sdk/3.2.0", c._session.headers["User-Agent"])
+        self.assertIn("coderifts-python-sdk/" + SDK_VERSION, c._session.headers["User-Agent"])
 
 
 class TestPreflightChangeSet(unittest.TestCase):
@@ -729,9 +729,24 @@ class TestParityRestMethods(unittest.TestCase):
         self.assertEqual(result.actions[0]["step"], 1)
 
     def test_how_to_unblock_non_block(self):
-        result = self.client.how_to_unblock(decision="ALLOW")
+        """"No unblock needed" now requires a READABLE proceed action.
+
+        Previously this passed ``decision="ALLOW"`` alone and asserted the
+        "no unblock needed" wording — pinning the fail-open this release fixes.
+        The decision label alone is not permission; the control input is
+        ``execution_action``.
+        """
+        result = self.client.how_to_unblock(
+            decision="ALLOW", execution_action="CONTINUE"
+        )
         self.assertEqual(len(result.actions), 1)
         self.assertIn("no unblock", result.actions[0]["description"])
+
+    def test_how_to_unblock_decision_label_alone_is_not_permission(self):
+        result = self.client.how_to_unblock(decision="ALLOW")
+        rendered = " ".join(a["description"] for a in result.actions)
+        self.assertNotIn("no unblock", rendered)
+        self.assertIn("treat as STOP", rendered)
 
 
 if __name__ == "__main__":

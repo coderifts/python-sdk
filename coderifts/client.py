@@ -12,11 +12,43 @@ from typing import Any, Dict, List, Mapping, Optional, Union
 import requests
 
 from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
+from .decision import UNREADABLE_DECISION, read_decision
 from .types import PreflightChangeSetContext, PreflightMode
 
 DEFAULT_BASE_URL = "https://app.coderifts.com/api/v1"
+
+# ── advisory prose (rendered from execution_action, never from ``decision``) ──
+#: Control-input → summary sentence. Keys are the closed ExecutionAction set.
+_ACTION_SUMMARY = {
+    "CONTINUE": "Execution action: CONTINUE — this change may proceed.",
+    "CONTINUE_WITH_MONITORING": (
+        "Execution action: CONTINUE_WITH_MONITORING — this change may proceed "
+        "only with monitoring wired."
+    ),
+    "REQUEST_APPROVAL": (
+        "Execution action: REQUEST_APPROVAL — manual approval is required "
+        "before this change may proceed."
+    ),
+    "STOP": "Execution action: STOP — this change must not proceed.",
+}
+
+#: Rendered whenever read_decision falls closed. Never says "safe to proceed".
+_UNREADABLE_SUMMARY = (
+    "Execution action is unrecognised or absent ({}) — treat as STOP; "
+    "this change must not proceed."
+).format(UNREADABLE_DECISION)
+
+#: Rendered as the first unblock step when read_decision falls closed.
+_UNREADABLE_UNBLOCK = (
+    "Execution action is unrecognised or absent ({}) — treat as STOP. "
+    "Re-read a response that carries execution_action, and resolve the "
+    "findings below before proceeding."
+).format(UNREADABLE_DECISION)
+
+#: Execution actions that genuinely need no unblock steps.
+_NO_UNBLOCK_ACTIONS = frozenset({"CONTINUE", "CONTINUE_WITH_MONITORING"})
 DEFAULT_TIMEOUT = 30
-SDK_VERSION = "3.2.0"
+SDK_VERSION = "3.4.0"
 
 # ID104 — verification expiry leeway (ms). Server applies this; the SDK is an HTTP client.
 # `exp + leeway < now` → VERIFIED_EXPIRED. 0s when intended context declares destructive
@@ -472,8 +504,11 @@ class CodeRifts:
         Maps to ``POST /api/v1/agent/preflight``. Legacy single-spec surface —
         prefer :meth:`preflight_change_set` for Decision Spec v2.
 
-        Branch on ``decision``. The wrapper also sets ``safe`` (ALLOW/WARN)
-        matching the TypeScript client. Unrecognised decision → not safe.
+        Branch on ``execution_action`` via
+        :func:`~coderifts.decision.read_decision` — measured live, this endpoint
+        emits it top-level. The wrapper also sets the legacy ``safe`` flag from
+        ``decision`` (ALLOW/WARN) for TypeScript parity; ``safe`` is legacy and
+        is not the control input.
         """
         raw = self._request(
             "POST",
@@ -504,9 +539,9 @@ class CodeRifts:
 
         Maps to ``POST /api/v1/diff``.
 
-        Branch on ``execution_action`` when present (authorize-shaped bodies);
-        otherwise ``should_block`` / ``decision``. Unrecognised
-        ``execution_action`` → STOP.
+        Branch on ``execution_action`` via
+        :func:`~coderifts.decision.read_decision` — measured live, this endpoint
+        emits it top-level. Unrecognised or absent → STOP.
         """
         body: Dict[str, Any] = {"before": before, "after": after}
         if branch_name is not None:
@@ -580,10 +615,37 @@ class CodeRifts:
         decision: str,
         reflex_triggers: Optional[List[Dict[str, Any]]] = None,
         omega_components: Optional[Dict[str, Any]] = None,
+        *,
+        execution_action: Optional[str] = None,
+        response: Any = None,
     ) -> _Response:
         """Human-readable explanation of a decision (TS ``explainDecision``).
 
         Computed client-side — no HTTP call, no invented endpoint.
+
+        **Advisory prose, not a gate.** For control flow call
+        :func:`~coderifts.decision.read_decision` on the response yourself; this
+        method only renders a summary.
+
+        The control input is ``execution_action``, resolved through
+        ``read_decision``: pass ``response=`` (a full API payload — preferred) or
+        ``execution_action=``. ``decision`` is rendered in the prose because it
+        explains *why*, and never selects a branch. When no readable execution
+        action is supplied the summary says the action is unrecognised and must
+        be treated as STOP — it never reports a change as safe to proceed.
+
+        Args:
+            omega_api: Ω_API score, rendered in the summary.
+            decision: Governance label for the prose (e.g. ``ALLOW``). Not a gate.
+            reflex_triggers: Triggered reflex rules; only the count is rendered.
+            omega_components: Numeric components to describe.
+            execution_action: Keyword-only control input.
+            response: Keyword-only full response payload; takes precedence over
+                ``execution_action``.
+
+        Returns:
+            Response wrapper with ``summary``, ``components``,
+            ``execution_action`` (the resolved control input) and ``reason``.
         """
         components = []
         if omega_components:
@@ -597,18 +659,24 @@ class CodeRifts:
                         }
                     )
         triggers = reflex_triggers or []
+        read = read_decision(
+            response if response is not None else {"execution_action": execution_action}
+        )
         summary = "Decision: {} (Ω_API = {}).".format(decision, omega_api)
         if triggers:
             summary += " {} reflex rule(s) triggered.".format(len(triggers))
-        if decision == "BLOCK":
-            summary += " This change is blocked due to high risk."
-        elif decision == "REQUIRE_APPROVAL":
-            summary += " This change requires manual approval before merging."
-        elif decision == "WARN":
-            summary += " This change has warnings but can proceed."
+        if read.unreadable:
+            summary += " " + _UNREADABLE_SUMMARY
         else:
-            summary += " This change is safe to proceed."
-        return _Response({"summary": summary, "components": components})
+            summary += " " + _ACTION_SUMMARY[read.execution_action]
+        return _Response(
+            {
+                "summary": summary,
+                "components": components,
+                "execution_action": read.execution_action,
+                "reason": read.reason,
+            }
+        )
 
     def how_to_unblock(
         self,
@@ -616,26 +684,69 @@ class CodeRifts:
         breaking_changes: Optional[List[Dict[str, Any]]] = None,
         detected_patterns: Optional[List[Any]] = None,
         reflex_triggers: Optional[List[Dict[str, Any]]] = None,
+        *,
+        execution_action: Optional[str] = None,
+        response: Any = None,
     ) -> _Response:
-        """Actionable steps to resolve a BLOCK (TS ``howToUnblock``).
+        """Actionable steps to resolve a halted change (TS ``howToUnblock``).
 
         Computed client-side — no HTTP call, no invented endpoint.
         ``detected_patterns`` is accepted for signature parity with TypeScript
         (the TS client currently does not render it).
+
+        **Advisory prose, not a gate.** For control flow call
+        :func:`~coderifts.decision.read_decision` on the response yourself.
+
+        The control input is ``execution_action``, resolved through
+        ``read_decision``: pass ``response=`` (a full API payload — preferred) or
+        ``execution_action=``. ``decision`` is rendered in the prose only.
+        "No unblock needed" is emitted **only** for a readable ``CONTINUE`` /
+        ``CONTINUE_WITH_MONITORING``; an unrecognised or absent action is
+        treated as STOP and still yields steps.
+
+        Args:
+            decision: Governance label for the prose. Not a gate.
+            breaking_changes: Breaking changes to render as the first fix step.
+            detected_patterns: Signature parity only; unused.
+            reflex_triggers: Reflex rules to render as steps.
+            execution_action: Keyword-only control input.
+            response: Keyword-only full response payload; takes precedence over
+                ``execution_action``.
+
+        Returns:
+            Response wrapper with ``actions``, ``execution_action`` and ``reason``.
         """
         del detected_patterns  # signature parity; unused in the TS client too
+        read = read_decision(
+            response if response is not None else {"execution_action": execution_action}
+        )
         actions: List[Dict[str, Any]] = []
         step = 1
-        if decision != "BLOCK":
+        if not read.unreadable and read.execution_action in _NO_UNBLOCK_ACTIONS:
             actions.append(
                 {
                     "step": step,
-                    "description": 'Current decision is "{}" — no unblock needed.'.format(
-                        decision
-                    ),
+                    "description": (
+                        'Execution action is "{}" (decision: "{}") '
+                        "— no unblock needed."
+                    ).format(read.execution_action, decision),
                 }
             )
-            return _Response({"actions": actions})
+            return _Response(
+                {
+                    "actions": actions,
+                    "execution_action": read.execution_action,
+                    "reason": read.reason,
+                }
+            )
+        if read.unreadable:
+            actions.append({"step": step, "description": _UNREADABLE_UNBLOCK})
+            step += 1
+        elif read.execution_action == "REQUEST_APPROVAL":
+            actions.append(
+                {"step": step, "description": _ACTION_SUMMARY["REQUEST_APPROVAL"]}
+            )
+            step += 1
         bcs = breaking_changes or []
         if bcs:
             example = "\n".join(
@@ -673,7 +784,13 @@ class CodeRifts:
                 ),
             }
         )
-        return _Response({"actions": actions})
+        return _Response(
+            {
+                "actions": actions,
+                "execution_action": read.execution_action,
+                "reason": read.reason,
+            }
+        )
 
 
 def _describe_component(name: str, value: float) -> str:

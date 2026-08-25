@@ -9,7 +9,10 @@ Canonical Decision Spec v2 tools:
 
 Additional REST methods match ``@coderifts/sdk`` 3.3.0 (``diff``,
 ``preflight_check``, ``score_mcp``, ``get_ledger``, ``simulate_policy``).
-Offline Ed25519 verification is intentionally not included (no crypto dep).
+``read_decision`` is the one correct entry point for reading a decision: it is
+fail-closed on ``execution_action`` and never lets ``decision`` drive control
+flow. It does not verify a receipt — offline Ed25519 verification is
+intentionally not included (no crypto dep).
 """
 
 from .client import (
@@ -20,6 +23,12 @@ from .client import (
     expiry_leeway_ms,
     is_issued_in_future,
     is_receipt_expired,
+)
+from .decision import (
+    EXECUTION_ACTIONS,
+    UNREADABLE_DECISION,
+    DecisionRead,
+    read_decision,
 )
 from .exceptions import ApiError, AuthError, CodeRiftsError, RateLimitError
 from .execution_grant import (
@@ -38,10 +47,14 @@ from .types import (
     PreflightMode,
 )
 
-__version__ = "3.2.0"
+__version__ = "3.4.0"
 __all__ = [
     "CLOCK_SKEW_LEEWAY_MS",
     "CodeRifts",
+    "read_decision",
+    "DecisionRead",
+    "EXECUTION_ACTIONS",
+    "UNREADABLE_DECISION",
     "PreflightChangeSetContext",
     "PreflightMode",
     "ExecutionAction",

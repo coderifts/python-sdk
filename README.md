@@ -22,7 +22,7 @@ only) — use `@coderifts/sdk`, `coderifts-app`, or `receipt-verifier`.
 | `simulate_policy` | yes (3.2.0) | `simulatePolicy` | `POST /api/v1/policy-simulator` |
 | `explain_decision` | yes (3.2.0) | `explainDecision` | client-side; no HTTP |
 | `how_to_unblock` | yes (3.2.0) | `howToUnblock` | client-side; no HTTP |
-| `readDecision` | **no** | `readDecision` | Guard helper — TS-only by design (agent-guard / tool-table). |
+| `read_decision` | yes (3.4.0) | `readDecision` | Fail-closed guard helper. No legacy `decision`→action arm (see below). |
 | `verifyExecutionGrant` | **no** | `verifyExecutionGrant` | Offline Ed25519. Python has no crypto dep; helpers `compute_scope_hash` / `receipt_digest` / `after_payload_canonical` only. |
 | waiver / deploy-gate / publish-gate | **no** | **no** | Not on the TS client. Not invented here. |
 | MCP client | **no** | **no** | Out of scope. |
@@ -176,6 +176,68 @@ client.score_mcp(manifest={"tools": []})
 client.get_ledger(repo="acme/api", from_="2026-01-01", limit=20)
 client.simulate_policy(policy_yaml="rules: []", old_spec=before, new_spec=after)
 ```
+
+## Reading a decision (start here)
+
+`read_decision(payload)` is the one correct entry point for turning any
+CodeRifts response into a go / no-go. It is fail-closed and it never lets
+`decision` drive control flow.
+
+```python
+from coderifts import CodeRifts, read_decision
+
+client = CodeRifts(api_key="cr_live_...")
+response = client.authorize_change_set(artifacts=artifacts, context={"operation": "deploy"})
+
+read = read_decision(response)
+if read.execution_action == "CONTINUE":
+    deploy()
+elif read.execution_action == "CONTINUE_WITH_MONITORING":
+    deploy_with_monitoring()
+else:  # REQUEST_APPROVAL, STOP, or anything unreadable
+    halt(read.decision, read.reason)
+```
+
+**`execution_action` is the control input.** `decision` (`ALLOW` / `WARN` /
+`REQUIRE_APPROVAL` / `BLOCK`) is the governance *explanation* label: log it,
+print it, put it in a PR comment — never branch on it. That is the agent-host
+rule `not_for_control_flow_use_execution_action`, and `@coderifts/conformance`
+ships a deliberately-wrong `branch-on-decision` subject that the suite fails.
+
+Resolution order, and what falls closed:
+
+| Input | Result |
+|-------|--------|
+| `decision_result.execution_action` (envelope) | that action, plus `envelope` / `receipt` |
+| top-level `execution_action` | that action |
+| unknown / misspelled / lowercase action | `STOP`, `reason="UNREADABLE_DECISION"` |
+| `{}`, `None`, a string, an error body | `STOP`, `reason="UNREADABLE_DECISION"` |
+| `decision` only, with no execution action | `STOP`, `reason="UNREADABLE_DECISION"` |
+| an **analyze** response | `STOP` — analyze is informational, not permission |
+
+`read_decision` never raises, so a guard may call it on any value.
+
+**What it does not do: it does not verify a receipt.** A returned `receipt` is
+transported, not validated — nothing here checks a signature, a chain link or
+an expiry. The Python SDK has no crypto dependency; use the app or the
+TypeScript kernel for offline Ed25519 verification.
+
+### `explain_decision` / `how_to_unblock` are prose, not gates
+
+Both render human-readable copy. Neither is a permission check — always gate on
+`read_decision`. Their control input is `execution_action`, passed either as a
+full payload (preferred) or as the scalar:
+
+```python
+client.explain_decision(omega_api=0.62, decision="BLOCK", response=response).summary
+client.how_to_unblock(decision="BLOCK", breaking_changes=bcs, response=response).actions
+```
+
+Given an unreadable or absent execution action they say the action is
+unrecognised and must be treated as STOP. `explain_decision` never reports a
+change as "safe to proceed", and `how_to_unblock` never says "no unblock
+needed" — that wording is reserved for a readable `CONTINUE` /
+`CONTINUE_WITH_MONITORING`.
 
 ## Error handling
 
