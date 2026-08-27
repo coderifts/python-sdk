@@ -20,7 +20,29 @@ ExecutionAction = Literal[
 ]
 PreflightMode = Literal["analyze", "authorize"]
 AnalysisOutcome = Literal["NO_BREAK_DETECTED", "BREAKS_DETECTED", "ANALYSIS_FAILED"]
-AuthorizeReceiptKind = Literal["operation_authorization", "NONE"]
+AuthorizeReceiptKind = Literal["operation_authorization", "execution_grant_v2", "NONE"]
+
+
+class ExecutionGrantV2(TypedDict):
+    """cr.exec.v2 payload (Execution Plane §1B)."""
+
+    v: Literal["cr.exec.v2"]
+    kid: str
+    grant_id: str
+    receipt_hash: str
+    tenant_id: str
+    executor_id: str
+    adapter_id: str
+    operation: str
+    target_uri: str
+    expected_state_token: str
+    after_payload_hash: str
+    nonce_hash: str
+    policy_hash: str
+    audience_hash: str
+    not_before: str
+    expires_at: str
+    max_attempts: int
 GraphSource = Literal["none", "declared", "observed", "declared+observed"]
 
 
