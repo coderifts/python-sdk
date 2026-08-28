@@ -82,6 +82,7 @@ class PreflightChangeSetContext(TypedDict, total=False):
     target_id: str
     fingerprint: str
     audience: str
+    platform: Literal["github", "gitlab", "bitbucket"]
 
 
 class AnalyzeChangeSetResponse(TypedDict, total=False):

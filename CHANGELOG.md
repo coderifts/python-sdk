@@ -2,6 +2,14 @@
 
 All notable changes to `coderifts-sdk` are documented here.
 
+## [3.6.0]
+
+Additive. `preflight_change_set` / `analyze_change_set` / `authorize_change_set`
+accept a per-request `scm_token` kwarg, sent only as `X-Coderifts-Scm-Token`.
+Never stored on the client, never placed in the JSON body, never present in
+thrown error text. `context.platform` is `github` | `gitlab` | `bitbucket`.
+Server-derivation error text is platform-neutral (SCM provider, not GitHub App).
+
 ## [3.5.0]
 
 **BREAKING, and deliberately so.** `preflight_check().safe` changes from

@@ -52,7 +52,7 @@ _UNREADABLE_UNBLOCK = (
 #: Execution actions that genuinely need no unblock steps.
 _NO_UNBLOCK_ACTIONS = frozenset({"CONTINUE", "CONTINUE_WITH_MONITORING"})
 DEFAULT_TIMEOUT = 30
-SDK_VERSION = "3.4.0"
+SDK_VERSION = "3.6.0"
 
 # ID104 — verification expiry leeway (ms). Server applies this; the SDK is an HTTP client.
 # `exp + leeway < now` → VERIFIED_EXPIRED. 0s when intended context declares destructive
@@ -132,7 +132,7 @@ def _assert_request_mode(artifacts, derivation, context):
     if artifacts:
         raise ValueError(
             'derivation="server" forbids caller-supplied artifacts[] — one source of truth '
-            "per request (the server lists the change-set via the GitHub App installation)"
+            "per request (the server lists the change-set via the SCM provider)"
         )
     ctx = context or {}
     missing = [k for k in ("repository", "base", "head") if not str(ctx.get(k) or "").strip()]
@@ -204,8 +204,11 @@ class CodeRifts:
         except Exception:
             return {"raw": resp.text}
 
-    def _post(self, path: str, body: dict) -> _Response:
-        data = self._request("POST", path, json=body)
+    def _post(self, path: str, body: dict, headers: Optional[Dict[str, str]] = None) -> _Response:
+        if headers:
+            data = self._request("POST", path, json=body, headers=headers)
+        else:
+            data = self._request("POST", path, json=body)
         return _Response(data)
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> _Response:
@@ -225,6 +228,7 @@ class CodeRifts:
         state_nonce: Optional[str] = None,
         previous_receipt: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        scm_token: Optional[str] = None,
     ) -> _Response:
         """Preflight a complete base→head change set of contract artifacts.
 
@@ -265,9 +269,13 @@ class CodeRifts:
             context: Optional :class:`PreflightChangeSetContext`. Documented
                 fields: ``operation``, ``environment``, ``repository``,
                 ``branch``, ``pull_request``, ``policy_profile``, ``base``,
-                ``head`` (PR/commit SHAs). Extra keys the API accepts are still
+                ``head`` (PR/commit SHAs), ``platform`` (``github`` / ``gitlab`` /
+                ``bitbucket``). Extra keys the API accepts are still
                 forwarded. For ``authorize``, the server requires a non-empty
                 ``context.operation``.
+            scm_token: Per-request SCM token for GitLab/Bitbucket Compare
+                derivation. Sent ONLY as the ``X-Coderifts-Scm-Token`` header
+                (never in the JSON body, never stored on the client).
             include_execution_grant: Opt-in ``cr.exec.v1`` grant on authorize.
                 Default omitted. The Python client does not verify grants
                 offline (no Ed25519 dependency); use the app/SDK-TS kernel.
@@ -302,6 +310,11 @@ class CodeRifts:
             body["previous_receipt"] = previous_receipt
         if idempotency_key is not None:
             body["idempotency_key"] = idempotency_key
+        extra_headers = None
+        if isinstance(scm_token, str) and scm_token.strip():
+            extra_headers = {"X-Coderifts-Scm-Token": scm_token.strip()}
+        if extra_headers:
+            return self._post("/preflight", body, headers=extra_headers)
         return self._post("/preflight", body)
 
     def analyze_change_set(
@@ -313,6 +326,7 @@ class CodeRifts:
         context: Optional[PreflightChangeSetContext] = None,
         previous_receipt: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        scm_token: Optional[str] = None,
     ) -> _Response:
         """Risk-only preflight (``preflight_mode='analyze'``).
 
@@ -327,6 +341,7 @@ class CodeRifts:
             context=context,
             previous_receipt=previous_receipt,
             idempotency_key=idempotency_key,
+            scm_token=scm_token,
         )
 
     def authorize_change_set(
@@ -339,6 +354,7 @@ class CodeRifts:
         include_execution_grant: Optional[bool] = None,
         previous_receipt: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        scm_token: Optional[str] = None,
     ) -> _Response:
         """Operation-bound authorize preflight (``preflight_mode='authorize'``).
 
@@ -358,6 +374,7 @@ class CodeRifts:
             include_execution_grant=include_execution_grant,
             previous_receipt=previous_receipt,
             idempotency_key=idempotency_key,
+            scm_token=scm_token,
         )
 
     def verify_receipt(

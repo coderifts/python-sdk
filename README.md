@@ -2,7 +2,7 @@
 
 Python SDK for [CodeRifts](https://coderifts.com) — API governance for AI agents.
 
-**v3.2.0** (ID75) closes REST method parity with `@coderifts/sdk` 3.3.0.
+**v3.6.0** (ID75 + 1087 scm_token) — REST parity with `@coderifts/sdk` 3.10.0.
 Decision Spec v2 still requires top-level `preflight_mode` on preflight.
 PyPI publishes are a separate, manual flow (do not `twine upload` from this
 checkout). Offline Ed25519 verification is **not** in this package (`requests`
@@ -10,7 +10,7 @@ only) — use `@coderifts/sdk`, `coderifts-app`, or `receipt-verifier`.
 
 ## Surface vs TypeScript SDK
 
-| Capability | Python | TypeScript 3.3.0 | Notes |
+| Capability | Python | TypeScript 3.10.0 | Notes |
 |------------|--------|------------------|-------|
 | `preflight_change_set` / `analyze_change_set` / `authorize_change_set` | yes | `preflightChangeSet` / `analyzeChangeSet` / `authorizeChangeSet` | `POST /api/v1/preflight` |
 | `verify_receipt` | yes | `verifyReceipt` | `POST /api/v1/verify-receipt` |

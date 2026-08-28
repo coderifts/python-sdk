@@ -180,6 +180,60 @@ class TestPreflightChangeSet(unittest.TestCase):
         self.assertIn("analyze", str(ctx.exception))
         self.assertIn("authorize", str(ctx.exception))
 
+    def test_scm_token_is_header_only_never_body_never_session_never_error(self):
+        SECRET = "scm-secret-do-not-leak"
+        captured = {}
+
+        def fake_request(method, url, **kwargs):
+            captured["method"] = method
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            resp = MagicMock()
+            resp.status_code = 403
+            resp.text = "Could not fetch bind file."
+            resp.json.return_value = {
+                "error": "repo_inaccessible",
+                "message": "Could not fetch bind file.",
+            }
+            return resp
+
+        self.client._session.request = fake_request
+        with self.assertRaises(ApiError) as cm:
+            self.client.preflight_change_set(
+                preflight_mode="authorize",
+                derivation="server",
+                context={
+                    "operation": "merge",
+                    "repository": "group/proj",
+                    "base": "main",
+                    "head": "feat",
+                    "platform": "gitlab",
+                },
+                scm_token=SECRET,
+            )
+        hdrs = captured["kwargs"].get("headers") or {}
+        self.assertEqual(hdrs.get("X-Coderifts-Scm-Token"), SECRET)
+        body = captured["kwargs"].get("json") or {}
+        self.assertEqual(body.get("context", {}).get("platform"), "gitlab")
+        self.assertNotIn("scm_token", body)
+        self.assertNotIn("scmToken", body)
+        self.assertNotIn("X-Coderifts-Scm-Token", self.client._session.headers)
+        hay = "\n".join([
+            str(cm.exception),
+            repr(cm.exception),
+            captured["kwargs"].get("json") and str(captured["kwargs"]["json"]) or "",
+        ])
+        self.assertNotIn(SECRET, hay)
+        self.assertFalse(hasattr(self.client, "scm_token") and getattr(self.client, "scm_token") == SECRET)
+
+    def test_server_derivation_error_is_platform_neutral(self):
+        from coderifts.client import _assert_request_mode
+        with self.assertRaises(ValueError) as cm:
+            _assert_request_mode([{"id": "a"}], "server", {"repository": "o/r", "base": "a", "head": "b"})
+        msg = str(cm.exception)
+        self.assertIn("SCM provider", msg)
+        self.assertNotIn("GitHub App", msg)
+
     def test_analyze_change_set_injects_mode(self):
         with patch.object(
             self.client, "_request", return_value={"analysis_outcome": "NO_BREAK_DETECTED"}
