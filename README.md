@@ -105,12 +105,32 @@ result = client.authorize_change_set(
         "operation": "merge",
         "environment": "staging",
     },
-    include_execution_grant=True,  # opt-in cr.exec.v1 grant
+    include_execution_grant=True,  # opt-in; cr.exec.v1 unless grant_version says otherwise
 )
+
+# The same call asking for a cr.exec.v2 grant, bound to a stated identity.
+# Omitting `execution_grant_binding` still issues a v2 grant — bound to the
+# server's defaults (executor_id "local", adapter_id "fs", tenant_id "default",
+# a target_uri derived from the repository and head sha) rather than to an
+# identity you named.
+result = client.authorize_change_set(
+    artifacts=artifacts,
+    context={"operation": "merge", "environment": "staging"},
+    include_execution_grant=True,
+    grant_version="v2",
+    execution_grant_binding={
+        "executor_id": "svc-deployer",
+        "adapter_id": "postgres",
+        "target_uri": "postgres://prod/articles",
+        "tenant_id": "acme",
+        "expected_state_token": 'W/"etag-9"',
+    },
+)
+print(result.receipt_kind)   # "execution_grant_v2" when a v2 grant was minted
 
 print(result.execution_action)   # e.g. "CONTINUE"
 print(result.decision)           # e.g. "ALLOW"
-print(result.receipt_kind)       # "operation_authorization" | "NONE"
+print(result.receipt_kind)       # "operation_authorization" | "execution_grant_v2" | "NONE"
 print(result.breaking_changes)   # integer count, not a list
 print(getattr(result, "execution_grant", None))  # grant token when opted in
 print(getattr(result, "blast_radius", None))

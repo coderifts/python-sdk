@@ -17,7 +17,12 @@ from .decision import (
     has_explicit_execution_action,
     read_decision,
 )
-from .types import PreflightChangeSetContext, PreflightMode
+from .types import (
+    EXECUTION_GRANT_V2_REQUEST_FIELDS,
+    ExecutionGrantV2Request,
+    PreflightChangeSetContext,
+    PreflightMode,
+)
 
 DEFAULT_BASE_URL = "https://app.coderifts.com/api/v1"
 
@@ -226,6 +231,8 @@ class CodeRifts:
         context: Optional[PreflightChangeSetContext] = None,
         include_execution_grant: Optional[bool] = None,
         state_nonce: Optional[str] = None,
+        grant_version: Optional[str] = None,
+        execution_grant_binding: Optional[ExecutionGrantV2Request] = None,
         previous_receipt: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         scm_token: Optional[str] = None,
@@ -276,9 +283,35 @@ class CodeRifts:
             scm_token: Per-request SCM token for GitLab/Bitbucket Compare
                 derivation. Sent ONLY as the ``X-Coderifts-Scm-Token`` header
                 (never in the JSON body, never stored on the client).
-            include_execution_grant: Opt-in ``cr.exec.v1`` grant on authorize.
-                Default omitted. The Python client does not verify grants
-                offline (no Ed25519 dependency); use the app/SDK-TS kernel.
+            include_execution_grant: Opt-in execution grant on authorize.
+                Default omitted. WHICH grant depends on ``grant_version``:
+                omitted issues ``cr.exec.v1``, ``'v2'`` issues ``cr.exec.v2``.
+                The Python client does not verify grants offline (no Ed25519
+                dependency); use the app/SDK-TS kernel.
+            grant_version: ``'v2'`` requests a ``cr.exec.v2`` grant. Omitted —
+                the default — keeps ``cr.exec.v1``, which the server still
+                issues. That is back-compat, not a deprecation.
+            execution_grant_binding: The v2 identity the grant should bind, as
+                :class:`~coderifts.types.ExecutionGrantV2Request`:
+                ``executor_id`` / ``adapter_id`` / ``target_uri`` /
+                ``tenant_id`` / ``expected_state_token``. Only meaningful with
+                ``grant_version='v2'``; sent at the request's TOP LEVEL, which
+                is where the server reads it.
+
+                MEASURED, and worth knowing before omitting it: the server does
+                NOT refuse a v2 request that names no identity. It falls back to
+                ``context.<same name>``, then to its own defaults
+                (``executor_id='local'``, ``adapter_id='fs'``,
+                ``tenant_id='default'``, and a ``target_uri`` derived from the
+                repository and head sha). A grant bound to those defaults is a
+                weaker statement than one bound to an identity you stated.
+
+                NOT exposed, because a client cannot supply them: the remaining
+                :class:`~coderifts.types.ExecutionGrantV2` fields (``kid``,
+                ``grant_id``, ``receipt_hash``, ``after_payload_hash``,
+                ``nonce_hash``, ``policy_hash``, ``audience_hash``) are minted
+                during issuance. A parameter the server ignores would read like
+                a binding that took effect.
             previous_receipt: Optional prior chain receipt to link (TS
                 ``previous_receipt``).
             idempotency_key: Optional client idempotency key (TS
@@ -306,6 +339,21 @@ class CodeRifts:
             body["include_execution_grant"] = include_execution_grant
         if state_nonce is not None:
             body["state_nonce"] = state_nonce
+        if grant_version is not None:
+            body["grant_version"] = grant_version
+        if execution_grant_binding:
+            # TOP LEVEL, not nested under context — measured against
+            # coderifts-app src/change-set.js:1265-1285, which reads these from
+            # the body's top level and treats `context.<name>` only as a
+            # fallback.
+            #
+            # Only the fields the server actually reads are forwarded. An
+            # unknown key would travel, be ignored, and read to the caller like
+            # a binding that took effect.
+            for _field in EXECUTION_GRANT_V2_REQUEST_FIELDS:
+                _value = execution_grant_binding.get(_field)
+                if _value is not None:
+                    body[_field] = _value
         if previous_receipt is not None:
             body["previous_receipt"] = previous_receipt
         if idempotency_key is not None:
@@ -352,6 +400,8 @@ class CodeRifts:
         state_nonce: Optional[str] = None,
         context: Optional[PreflightChangeSetContext] = None,
         include_execution_grant: Optional[bool] = None,
+        grant_version: Optional[str] = None,
+        execution_grant_binding: Optional[ExecutionGrantV2Request] = None,
         previous_receipt: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         scm_token: Optional[str] = None,
@@ -372,6 +422,8 @@ class CodeRifts:
             state_nonce=state_nonce,
             context=context,
             include_execution_grant=include_execution_grant,
+            grant_version=grant_version,
+            execution_grant_binding=execution_grant_binding,
             previous_receipt=previous_receipt,
             idempotency_key=idempotency_key,
             scm_token=scm_token,

@@ -43,6 +43,48 @@ class ExecutionGrantV2(TypedDict):
     not_before: str
     expires_at: str
     max_attempts: int
+
+
+#: The v2 binding fields a CLIENT may send on the preflight request.
+#:
+#: MEASURED against the live server (coderifts-app src/change-set.js:1265-1285):
+#: these are read from the request body's top level, with ``context.<same name>``
+#: as a fallback and a server-side default when neither is given.
+#:
+#: THIS IS A SUBSET OF :class:`ExecutionGrantV2`'s field names, and deliberately
+#: not the whole type. ExecutionGrantV2 describes the grant the server ISSUES;
+#: most of its fields (``kid``, ``grant_id``, ``receipt_hash``,
+#: ``after_payload_hash``, ``nonce_hash``, ``policy_hash``, ``audience_hash``)
+#: are minted during issuance and a client cannot supply them. Exposing them as
+#: request parameters would invite callers to send values the server ignores.
+#:
+#: ``tests/test_execution_grant_v2_request.py`` pins the subset relationship, so
+#: this cannot drift from the canonical type it is derived from.
+EXECUTION_GRANT_V2_REQUEST_FIELDS = (
+    "executor_id",
+    "adapter_id",
+    "target_uri",
+    "tenant_id",
+    "expected_state_token",
+)
+
+
+class ExecutionGrantV2Request(TypedDict, total=False):
+    """The v2 binding a client sends on ``POST /api/v1/preflight``.
+
+    Every field is optional: the server falls back to ``context.<name>`` and
+    then to its own default. Sending none of them with ``grant_version='v2'``
+    still issues a v2 grant — bound to the server's defaults rather than to an
+    identity the caller stated.
+    """
+
+    executor_id: str
+    adapter_id: str
+    target_uri: str
+    tenant_id: str
+    expected_state_token: str
+
+
 GraphSource = Literal["none", "declared", "observed", "declared+observed"]
 
 
