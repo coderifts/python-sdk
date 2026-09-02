@@ -268,12 +268,21 @@ class TestExecutionGrantV2Request(unittest.TestCase):
                 "kid": "k1",
                 "grant_id": "g1",
                 "receipt_hash": "sha256:x",
-                "policy_hash": "sha256:p",
+                "audience_hash": "sha256:a",
             },
         )
         self.assertEqual(body["executor_id"], "e")
-        for minted in ("kid", "grant_id", "receipt_hash", "policy_hash"):
+        for minted in ("kid", "grant_id", "receipt_hash", "audience_hash"):
             self.assertNotIn(minted, body, "{} was forwarded but the server mints it".format(minted))
+        # `policy_hash` moved to the OTHER side of this line in 1182 — it is now claimed by the
+        # caller and bound by the issuer (change-set.js:1323), so it must travel.
+        body = self._capture(
+            artifacts=[ARTIFACT],
+            preflight_mode="authorize",
+            grant_version="v2",
+            execution_grant_binding={"executor_id": "e", "policy_hash": "sha256:p"},
+        )
+        self.assertEqual(body["policy_hash"], "sha256:p")
 
     def test_no_binding_and_no_version_leaves_the_body_as_before(self):
         # BACK-COMPAT: the v1 shape is untouched when the new kwargs are absent.
@@ -344,19 +353,28 @@ class TestExecutionGrantV2RequestType(unittest.TestCase):
     def test_the_minted_fields_are_deliberately_excluded(self):
         from coderifts.types import EXECUTION_GRANT_V2_REQUEST_FIELDS
 
+        # `policy_hash` LEFT this list in 1182. It is a hybrid: the CALLER claims it and the
+        # ISSUER binds it (change-set.js:1323, "1206 variant A"). It was excluded here while the
+        # handler still dropped it, which was true then and is not now. `audience_hash` stays —
+        # that one really is derived, from an `audience` the server sets itself.
         for minted in (
             "kid", "grant_id", "receipt_hash", "after_payload_hash",
-            "nonce_hash", "policy_hash", "audience_hash", "v",
+            "nonce_hash", "audience_hash", "v",
         ):
             self.assertNotIn(minted, EXECUTION_GRANT_V2_REQUEST_FIELDS)
 
     def test_every_request_field_is_one_the_server_reads(self):
-        # Pinned against the measured server list (change-set.js:1276-1281).
-        # If the server grows a sixth, this fails and names it — which is the
+        # Pinned against the measured server list (change-set.js:1296-1323).
+        # If the server grows another, this fails and names it — which is the
         # prompt to expose it, not to guess.
+        #
+        # `policy_hash` joined in 1182 (server side: :1323). `audience` did NOT and must not:
+        # routes/preflight-change-set.js:144 overwrites any client-supplied value with the
+        # server-derived one, so exposing it would ship an argument that silently does nothing.
         from coderifts.types import EXECUTION_GRANT_V2_REQUEST_FIELDS
 
         server_reads = {
             "executor_id", "adapter_id", "target_uri", "tenant_id", "expected_state_token",
+            "policy_hash",
         }
         self.assertEqual(set(EXECUTION_GRANT_V2_REQUEST_FIELDS), server_reads)

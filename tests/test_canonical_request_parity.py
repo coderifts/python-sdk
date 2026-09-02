@@ -92,3 +92,230 @@ def test_policy_hash_is_now_a_read_field(fixture):
     # 1206 variant A: the server forwards and binds it. A speaker that still calls it
     # minted-only is stale, and this is where that shows up.
     assert fixture["reading"]["policy_hash"] == fixture["request"]["policy_hash"]
+
+
+# ── 1182 — the minting ARGUMENTS, not just the payload type ──────────────────────────────────
+#
+# The v2 payload type existed before this; what a caller could not do was SEND every field the
+# canonical request carries. `audience` and `policy_hash` were absent from the declared tuple, and
+# because the byte-equivalence test above iterates THAT tuple, their absence made it pass without
+# covering them. These tests close on the fixture instead.
+
+
+def test_every_canonical_top_level_field_is_sendable(fixture):
+    """The SDK can send every top-level field the canonical request carries.
+
+    Anchored on the FIXTURE, not on the SDK's own list — a test that iterates the SDK's tuple
+    cannot notice a field the SDK never declared.
+    """
+    request = fixture["request"]
+    # Fields the SDK carries as dedicated arguments rather than through the binding.
+    dedicated = {"preflight_mode", "include_execution_grant", "grant_version", "state_nonce", "context"}
+    # `audience` is in the fixture but is NOT client-sendable: routes/preflight-change-set.js:144
+    # overwrites it with the server-derived value. See test_audience_hash_is_derived_not_sent.
+    dedicated.add("audience")
+    for field in request:
+        if field in dedicated:
+            continue
+        assert field in EXECUTION_GRANT_V2_REQUEST_FIELDS, (
+            f"the canonical request carries {field} and the Python SDK cannot send it"
+        )
+
+
+def test_policy_hash_is_declared_and_audience_is_not(fixture):
+    """The 1182 gap, and the field that only looked like part of it.
+
+    `policy_hash` was the real gap. `audience` sits beside it in the canonical request and is the
+    one a naive reading of the fixture would also add — the fixture records what the SERVER
+    assembled, and the server overwrites any client-supplied audience
+    (routes/preflight-change-set.js:144). An argument that travels and is discarded is worse than
+    no argument at all.
+    """
+    assert "policy_hash" in EXECUTION_GRANT_V2_REQUEST_FIELDS
+    assert "policy_hash" in fixture["request"]
+    assert "audience" in fixture["request"]
+    assert "audience" not in EXECUTION_GRANT_V2_REQUEST_FIELDS
+
+
+def test_the_built_body_is_byte_equal_to_the_canonical_request(fixture):
+    """Build the request the SDK would send and compare it to the fixture, field by field."""
+    from coderifts.client import CodeRifts
+
+    request = fixture["request"]
+    binding = {f: request[f] for f in EXECUTION_GRANT_V2_REQUEST_FIELDS if f in request}
+
+    captured = {}
+
+    class _Capture(CodeRifts):
+        def _post(self, path, body=None, **kwargs):  # noqa: D401
+            captured["body"] = body
+            return {}
+
+    client = _Capture(api_key="cr_test_key")
+    try:
+        client.authorize_change_set(
+            request.get("artifacts", [{"id": "a", "type": "openapi", "before": "x", "after": "y"}]),
+            context=request["context"],
+            include_execution_grant=request["include_execution_grant"],
+            grant_version=request["grant_version"],
+            state_nonce=request["state_nonce"],
+            execution_grant_binding=binding,
+        )
+    except Exception as exc:  # pragma: no cover - surfaced below with context
+        raise AssertionError(f"building the canonical request raised: {exc}") from exc
+
+    body = captured.get("body")
+    assert body is not None, "the client did not build a request body"
+    for field in EXECUTION_GRANT_V2_REQUEST_FIELDS:
+        assert body.get(field) == request[field], (
+            f"{field}: SDK sent {body.get(field)!r}, canonical request has {request[field]!r}"
+        )
+    # The dedicated arguments must land at the TOP LEVEL, where the handler reads them.
+    for field in ("grant_version", "include_execution_grant", "state_nonce"):
+        assert body.get(field) == request[field], f"{field} did not reach the top level"
+
+
+def test_v1_is_still_the_default(fixture):
+    """The version gate: omitting grant_version must not send one."""
+    from coderifts.client import CodeRifts
+
+    captured = {}
+
+    class _Capture(CodeRifts):
+        def _post(self, path, body=None, **kwargs):
+            captured["body"] = body
+            return {}
+
+    client = _Capture(api_key="cr_test_key")
+    client.authorize_change_set(
+        [{"id": "a", "type": "openapi", "before": "x", "after": "y"}],
+        context={"operation": "merge"},
+        include_execution_grant=True,
+    )
+    assert "grant_version" not in captured["body"], "omitting grant_version must not default to v2"
+
+
+def test_resolve_state_challenge_supplies_both_halves():
+    """The hook returns what the EXECUTOR holds; the SDK carries it, and mints nothing."""
+    from coderifts.client import CodeRifts
+
+    captured = {}
+
+    class _Capture(CodeRifts):
+        def _post(self, path, body=None, **kwargs):
+            captured["body"] = body
+            return {}
+
+    client = _Capture(api_key="cr_test_key")
+    client.authorize_change_set(
+        [{"id": "a", "type": "openapi", "before": "x", "after": "y"}],
+        context={"operation": "merge"},
+        include_execution_grant=True,
+        grant_version="v2",
+        resolve_state_challenge=lambda: {
+            "state_nonce": "nonce-from-executor",
+            "expected_state_token": "sha256:" + "e" * 64,
+        },
+    )
+    assert captured["body"]["state_nonce"] == "nonce-from-executor"
+    assert captured["body"]["expected_state_token"] == "sha256:" + "e" * 64
+
+
+def test_two_sources_for_one_nonce_is_refused():
+    """state_nonce and a resolver together is refused, not silently resolved one way."""
+    from coderifts.client import CodeRifts
+
+    client = CodeRifts(api_key="cr_test_key")
+    with pytest.raises(ValueError, match="not both"):
+        client.authorize_change_set(
+            [{"id": "a", "type": "openapi", "before": "x", "after": "y"}],
+            context={"operation": "merge"},
+            state_nonce="from-argument",
+            resolve_state_challenge=lambda: {"state_nonce": "from-resolver"},
+        )
+
+
+def test_a_disagreeing_expected_state_token_is_refused():
+    """Binding and resolver disagreeing is an error, not a silent pick."""
+    from coderifts.client import CodeRifts
+
+    client = CodeRifts(api_key="cr_test_key")
+    with pytest.raises(ValueError, match="differs between"):
+        client.authorize_change_set(
+            [{"id": "a", "type": "openapi", "before": "x", "after": "y"}],
+            context={"operation": "merge"},
+            grant_version="v2",
+            execution_grant_binding={"expected_state_token": "sha256:" + "a" * 64},
+            resolve_state_challenge=lambda: {"expected_state_token": "sha256:" + "b" * 64},
+        )
+
+
+def test_the_sdk_does_not_mint_grants():
+    """No local minting. The SERVER mints; this library requests and carries.
+
+    A grant this library signed would be worthless — it would attest that the caller authorised
+    itself. Asserted as an absence of any signing capability rather than as a comment.
+    """
+    import coderifts.client as client_mod
+    import coderifts.execution_grant as grant_mod
+
+    source = pathlib.Path(client_mod.__file__).read_text()
+    assert "sign(" not in source and "PrivateKey" not in source, (
+        "the client must not carry signing capability"
+    )
+    # The execution_grant module VERIFIES; it must not issue.
+    grant_source = pathlib.Path(grant_mod.__file__).read_text()
+    assert "def issue" not in grant_source and "def mint" not in grant_source
+
+
+def test_a_resolver_that_returns_no_nonce_sends_no_nonce():
+    """The SDK does not fill in a nonce the executor did not supply.
+
+    Control for the test above: that one passes as long as the SDK *forwards* what the resolver
+    returned, and would keep passing if the SDK also invented a value when the resolver returned
+    nothing. This one plants that case. A nonce this library made up binds the grant to a state no
+    executor is holding — the same failure class as minting a grant, one field down.
+    """
+    from coderifts.client import CodeRifts
+
+    captured = {}
+
+    class _Capture(CodeRifts):
+        def _post(self, path, body=None, **kwargs):
+            captured["body"] = body
+            return {}
+
+    client = _Capture(api_key="cr_test_key")
+    client.authorize_change_set(
+        [{"id": "a", "type": "openapi", "before": "x", "after": "y"}],
+        context={"operation": "merge"},
+        include_execution_grant=True,
+        grant_version="v2",
+        resolve_state_challenge=lambda: {"expected_state_token": "sha256:" + "f" * 64},
+    )
+    assert "state_nonce" not in captured["body"], (
+        "the resolver supplied no nonce and the SDK sent one anyway"
+    )
+    # The half the executor DID supply still travels.
+    assert captured["body"]["expected_state_token"] == "sha256:" + "f" * 64
+
+
+def test_the_typed_result_carries_the_grant():
+    """The grant arrives in `execution_grant`, typed, whichever version was requested.
+
+    MEASURED against coderifts-app src/change-set.js:1462 — a v2 grant lands in the same key as a
+    v1 one; nothing about the response field is version-specific.
+    """
+    from coderifts.types import AuthorizeChangeSetResponse
+
+    annotations = AuthorizeChangeSetResponse.__annotations__
+    assert "execution_grant" in annotations
+    # `from __future__ import annotations` leaves these as ForwardRef/str objects.
+    assert str(annotations["execution_grant"]).endswith("str')") or annotations[
+        "execution_grant"
+    ] is str
+
+    from coderifts.client import _Response
+
+    response = _Response({"preflight_mode": "authorize", "execution_grant": "eyJ.a.b"})
+    assert response.execution_grant == "eyJ.a.b"

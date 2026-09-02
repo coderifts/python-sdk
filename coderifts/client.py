@@ -7,7 +7,7 @@ Offline Ed25519 verification is intentionally not in this package.
 """
 
 import math
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Union
 
 import requests
 
@@ -22,6 +22,7 @@ from .types import (
     ExecutionGrantV2Request,
     PreflightChangeSetContext,
     PreflightMode,
+    StateChallenge,
 )
 
 DEFAULT_BASE_URL = "https://app.coderifts.com/api/v1"
@@ -402,6 +403,7 @@ class CodeRifts:
         include_execution_grant: Optional[bool] = None,
         grant_version: Optional[str] = None,
         execution_grant_binding: Optional[ExecutionGrantV2Request] = None,
+        resolve_state_challenge: Optional[Callable[[], StateChallenge]] = None,
         previous_receipt: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         scm_token: Optional[str] = None,
@@ -414,7 +416,48 @@ class CodeRifts:
 
         Branch on ``execution_action`` (``CONTINUE`` | ``CONTINUE_WITH_MONITORING``
         | ``REQUEST_APPROVAL`` | ``STOP``). Unrecognised → STOP.
+
+        **This SDK never mints an execution grant.** The SERVER mints; this library
+        requests one (``include_execution_grant=True``) and carries what comes back. A grant
+        minted locally would be signed by the caller and would therefore attest only that the
+        caller authorised itself — worthless to any verifier, which checks the issuer key. If
+        you are looking for a "sign a grant" call here, its absence is the design.
+
+        Args:
+            grant_version: ``"v2"`` selects the ATOMIC-profile grant. Omitted → the server's
+                default (v1); this SDK sends no version of its own.
+            execution_grant_binding: The v2 identity the grant should bind. Forwarded at the
+                request's top level; unknown keys are dropped rather than sent.
+            resolve_state_challenge: Zero-argument callable returning
+                ``{"state_nonce": ..., "expected_state_token": ...}`` (both optional). Both
+                halves come from the EXECUTOR — the component that will consume the nonce and
+                observe the state. This SDK does not generate either: a nonce invented here
+                would bind the grant to a state no executor is holding. Called exactly once,
+                so one call cannot mix a nonce from one resolution with a token from another.
+                Mutually exclusive with ``state_nonce``.
         """
+        # ── the state challenge ─────────────────────────────────────────────────────────
+        binding = dict(execution_grant_binding) if execution_grant_binding else None
+        if resolve_state_challenge is not None:
+            if state_nonce is not None:
+                raise ValueError(
+                    "pass either state_nonce or resolve_state_challenge, not both — "
+                    "two sources for one nonce is how they diverge"
+                )
+            challenge = resolve_state_challenge() or {}
+            state_nonce = challenge.get("state_nonce")
+            token = challenge.get("expected_state_token")
+            if token is not None:
+                binding = dict(binding or {})
+                # An expected_state_token already in the binding is NOT overwritten silently:
+                # the caller stated it twice and the two may disagree.
+                if binding.get("expected_state_token") not in (None, token):
+                    raise ValueError(
+                        "expected_state_token differs between execution_grant_binding and "
+                        "resolve_state_challenge — the grant would be bound to one of them "
+                        "and this SDK will not choose"
+                    )
+                binding["expected_state_token"] = token
         return self.preflight_change_set(
             artifacts,
             preflight_mode="authorize",
@@ -423,7 +466,7 @@ class CodeRifts:
             context=context,
             include_execution_grant=include_execution_grant,
             grant_version=grant_version,
-            execution_grant_binding=execution_grant_binding,
+            execution_grant_binding=binding,
             previous_receipt=previous_receipt,
             idempotency_key=idempotency_key,
             scm_token=scm_token,

@@ -20,6 +20,13 @@ ExecutionAction = Literal[
 ]
 PreflightMode = Literal["analyze", "authorize"]
 AnalysisOutcome = Literal["NO_BREAK_DETECTED", "BREAKS_DETECTED", "ANALYSIS_FAILED"]
+# MEASURED 2026-09-02 (1182): the server emits only two of these three. The authorize branch at
+# coderifts-app src/change-set.js:1459 sets `receipt_kind: receipt ? 'operation_authorization' :
+# 'NONE'`, and the string "execution_grant_v2" appears nowhere in coderifts-app — a caller
+# branching on it has a branch that never runs. It is left declared rather than removed because
+# dropping a Literal member is a breaking change for anyone type-checking against it; flagged for
+# a deliberate decision. A v2 grant arrives in `execution_grant` (:1462) like a v1 one — the
+# grant's own version lives in its payload (`v: "cr.exec.v2"`), not in receipt_kind.
 AuthorizeReceiptKind = Literal["operation_authorization", "execution_grant_v2", "NONE"]
 
 
@@ -66,7 +73,41 @@ EXECUTION_GRANT_V2_REQUEST_FIELDS = (
     "target_uri",
     "tenant_id",
     "expected_state_token",
+    # 1182 — MEASURED 2026-09-02, and the two candidates split.
+    #
+    # `policy_hash` IS sendable: coderifts-app src/change-set.js:1323 forwards
+    # `nonEmptyStr(input.policy_hash)` into the issuer, which binds it into the signed grant
+    # ("1206 variant A"). Before that landed the server dropped it and every grant carried the
+    # issuer's sha256('') default — so a Python caller could claim a policy identity and it went
+    # nowhere. It is added here, and the tuple is what the parity test's byte-equivalence loop
+    # iterates, so its absence was making that check pass without covering it.
+    #
+    # `audience` is NOT sendable and is deliberately absent. src/routes/preflight-change-set.js:144
+    # builds `{ ...body, audience: decisionAudienceFor(req) }` — the server value is spread LAST,
+    # so a client-supplied audience is overwritten unconditionally, and change-set.js:1121 accepts
+    # only the measured `v:<12 hex>` form anyway. Exposing it would give a caller an argument that
+    # travels, is discarded, and reads like a binding that took effect. It appears in
+    # test/fixtures/v2-grant-canonical-request.json because the fixture records the request the
+    # SERVER assembled, not what a client may send.
+    "policy_hash",
 )
+
+
+class StateChallenge(TypedDict, total=False):
+    """What a state-challenge resolver returns.
+
+    The ATOMIC profile binds a grant to a state the executor expects to find. Both halves come
+    from the EXECUTOR, not from this SDK and not from the server:
+
+    * ``state_nonce`` — the value the executor will consume exactly once.
+    * ``expected_state_token`` — the state the caller expects to observe at apply time.
+
+    Returning neither is a BEARER grant: nothing to consume once. Returning only
+    ``state_nonce`` is an ATOMIC grant bound to no expected state.
+    """
+
+    state_nonce: str
+    expected_state_token: str
 
 
 class ExecutionGrantV2Request(TypedDict, total=False):
@@ -83,6 +124,7 @@ class ExecutionGrantV2Request(TypedDict, total=False):
     target_uri: str
     tenant_id: str
     expected_state_token: str
+    policy_hash: str
 
 
 GraphSource = Literal["none", "declared", "observed", "declared+observed"]
