@@ -7,6 +7,10 @@ All notable changes to `coderifts-sdk` are documented here.
 - `[project.optional-dependencies] test = ["pytest>=7"]` so a fresh venv can
   `pip install -e '.[test]'` and run `pytest`. Measured: pytest is the only
   third-party import in `tests/`.
+- CI (`.github/workflows/ci.yml`): ubuntu, `pip install -e '.[test]'`, `pytest`.
+- Packed-install smoke (`scripts/check-packed-install.sh` / `make packed-install`):
+  `python -m build`, install the wheel into a fresh venv, import the public
+  entry, pytest against the installed package.
 
 ## [3.6.0]
 

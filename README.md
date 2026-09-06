@@ -47,6 +47,17 @@ pip install -e '.[test]'
 pytest
 ```
 
+The published artifact (not the working tree) is checked by:
+
+```bash
+make packed-install
+# or: bash scripts/check-packed-install.sh
+```
+
+That runs `python -m build`, installs the **wheel** into a fresh venv, imports
+`from coderifts import CodeRifts` (README Quick start), then `pytest` against
+the installed package.
+
 ## Quick start
 
 ```python
