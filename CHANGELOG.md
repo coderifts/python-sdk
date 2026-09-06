@@ -2,6 +2,12 @@
 
 All notable changes to `coderifts-sdk` are documented here.
 
+## Unreleased
+
+- `[project.optional-dependencies] test = ["pytest>=7"]` so a fresh venv can
+  `pip install -e '.[test]'` and run `pytest`. Measured: pytest is the only
+  third-party import in `tests/`.
+
 ## [3.6.0]
 
 Additive. `preflight_change_set` / `analyze_change_set` / `authorize_change_set`

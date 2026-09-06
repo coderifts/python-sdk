@@ -35,6 +35,18 @@ pip install coderifts-sdk
 
 Requires Python 3.9+ and `requests`.
 
+## Tests
+
+Third-party test dependency is **pytest only** (measured against `tests/` imports;
+`unittest` is stdlib, `requests` is the runtime dep). From a fresh venv:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e '.[test]'
+pytest
+```
+
 ## Quick start
 
 ```python

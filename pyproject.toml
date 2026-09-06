@@ -31,5 +31,14 @@ Homepage = "https://coderifts.com"
 Documentation = "https://coderifts.com/docs"
 Repository = "https://github.com/coderifts/python-sdk"
 
+[project.optional-dependencies]
+# Measured 2026-09-06 against tests/: the only third-party import is `pytest`
+# (test_canonical_request_parity.py). unittest / unittest.mock / json / os /
+# pathlib / ast / inspect are stdlib. `requests` is a runtime dependency.
+test = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.setuptools.packages.find]
 include = ["coderifts*"]
