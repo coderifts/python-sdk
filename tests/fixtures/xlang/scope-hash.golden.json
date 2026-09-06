@@ -1,0 +1,182 @@
+{
+  "schema": "cr.xlang.scope-hash-golden.v1",
+  "note": "Repo-internal golden oracle for the cross-language invariants. Each side asserts its OWN computation against these values; two sides that both match the file match each other, with neither needing the other checked out.",
+  "scope_hash": [
+    {
+      "name": "all three present",
+      "args": {
+        "operation": "publish",
+        "target_id": "sha256:abc",
+        "after_payload": "{\"a\":1}"
+      },
+      "expected": "sha256:d22964152ce92e6bc49774e7516c99a571720e49dcaf9c78b1943344ac061c98"
+    },
+    {
+      "name": "empty target_id",
+      "args": {
+        "operation": "publish",
+        "target_id": "",
+        "after_payload": "body"
+      },
+      "expected": "sha256:10209a523e88e0667598c65fe4babf8a7df65450acb3452d4e55b5d5481ca16b"
+    },
+    {
+      "name": "absent target_id hashes like empty",
+      "args": {
+        "operation": "publish",
+        "after_payload": "body"
+      },
+      "expected": "sha256:10209a523e88e0667598c65fe4babf8a7df65450acb3452d4e55b5d5481ca16b"
+    },
+    {
+      "name": "absent after_payload",
+      "args": {
+        "operation": "deploy",
+        "target_id": "42"
+      },
+      "expected": "sha256:08954b9ef10c11166c7293ab51819b3a385d389ffb5a6788310fddb78c03b43d"
+    },
+    {
+      "name": "all absent",
+      "args": {},
+      "expected": "sha256:b8c9e440ead3ddaccf7cc7e879d512a263272270df2d5504c0c3d1f85d16f9d9"
+    },
+    {
+      "name": "separator byte inside the payload",
+      "args": {
+        "operation": "publish",
+        "target_id": "",
+        "after_payload": "a\u001fb"
+      },
+      "expected": "sha256:2ae12e363f0512b2768bc0f12fb8ca24e485e74cc4ff1179d5a978fcb4293667"
+    },
+    {
+      "name": "newline and pipe inside the payload",
+      "args": {
+        "operation": "publish",
+        "target_id": "",
+        "after_payload": "a\n|b"
+      },
+      "expected": "sha256:78df185047ed9cc6cc43ef92ccc41186d49b3269456ca2aed7db0dcd64a9e6f8"
+    },
+    {
+      "name": "multi-byte UTF-8",
+      "args": {
+        "operation": "publish",
+        "target_id": "ő",
+        "after_payload": "日本語 — em dash"
+      },
+      "expected": "sha256:059223d5ad18eff481a63da9d28c2b9214a8579d52a184311a8641311de02652"
+    },
+    {
+      "name": "empty string payload",
+      "args": {
+        "operation": "publish",
+        "target_id": "x",
+        "after_payload": ""
+      },
+      "expected": "sha256:5f3a4ac4811b1ffac3f013b4547ba18c5ca0d8512a9ac76ddcd396d4eea9dd90"
+    },
+    {
+      "name": "CRLF and trailing whitespace survive verbatim",
+      "args": {
+        "operation": "publish",
+        "target_id": "",
+        "after_payload": "a\r\n  \nb"
+      },
+      "expected": "sha256:77ab17231a993da3595a61a4b49d90761a411176e373d4bedabc8910c548b131"
+    },
+    {
+      "name": "NUL byte inside the payload",
+      "args": {
+        "operation": "publish",
+        "target_id": "",
+        "after_payload": "a\u0000b"
+      },
+      "expected": "sha256:b93f1acee919c0463b89979bfa5a8b5ac2f972f4dfe0f9db2ce11a949be17907"
+    },
+    {
+      "name": "astral plane",
+      "args": {
+        "operation": "publish",
+        "target_id": "🔐",
+        "after_payload": "𝔘𝔫𝔦"
+      },
+      "expected": "sha256:6264d36fafdb8abc19314ebd52dc6a041d36c1a227bdadd8742735dc6bb8092b"
+    }
+  ],
+  "after_payload_canonical": [
+    {
+      "name": "empty artifact list",
+      "artifacts": [],
+      "expected": ""
+    },
+    {
+      "name": "one artifact",
+      "artifacts": [
+        {
+          "id": "a.yaml",
+          "type": "openapi",
+          "after": "X"
+        }
+      ],
+      "expected": "X"
+    },
+    {
+      "name": "sorted by (type,id), not input order",
+      "artifacts": [
+        {
+          "id": "b",
+          "type": "openapi",
+          "after": "B"
+        },
+        {
+          "id": "a",
+          "type": "openapi",
+          "after": "A"
+        }
+      ],
+      "expected": "A\u001fB"
+    },
+    {
+      "name": "type sorts before id",
+      "artifacts": [
+        {
+          "id": "a",
+          "type": "z",
+          "after": "Z"
+        },
+        {
+          "id": "b",
+          "type": "a",
+          "after": "A"
+        }
+      ],
+      "expected": "A\u001fZ"
+    },
+    {
+      "name": "absent after is the empty string",
+      "artifacts": [
+        {
+          "id": "a",
+          "type": "t"
+        }
+      ],
+      "expected": ""
+    },
+    {
+      "name": "object after is JSON.stringify, not RFC 8785",
+      "artifacts": [
+        {
+          "id": "a",
+          "type": "t",
+          "after": {
+            "b": 1,
+            "a": 2
+          }
+        }
+      ],
+      "expected": "{\"b\":1,\"a\":2}"
+    }
+  ]
+}
