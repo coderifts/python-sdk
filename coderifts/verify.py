@@ -20,8 +20,37 @@ implementation.
 IT IS NOT A SIGNATURE CHECK. This package depends only on ``requests`` and deliberately does not
 carry Ed25519 (see execution_grant.py). Nothing here establishes that the issuer signed the grant,
 that the executor signed the attestation, or that the evidence root binds the set. A capture whose
-every signature was forged would pass this and fail the Node verify — which is why the Node verify
-is the one that decides, and this one only proves the arithmetic travels.
+every signature was forged would pass this and fail a real verifier.
+
+── WHERE FULL OFFLINE VERIFICATION LIVES IN PYTHON ─────────────────────────────────────────
+
+It exists, and it is not here:
+
+    pip install coderifts-verifier
+
+    from coderifts_verifier import verify_receipt, keyring_from_document
+    verify_receipt(token, {"keyring": keyring_from_document(doc, path), "expectedKid": None})
+
+MEASURED against a real capture: that package verifies a valid receipt as ``VERIFIED_CURRENT`` and
+refuses a one-bit signature tamper as ``INVALID_SIGNATURE/signature_mismatch``. It is full Ed25519,
+offline, in Python, with no call to CodeRifts.
+
+── WHY THAT CODE IS NOT COPIED INTO THIS PACKAGE ───────────────────────────────────────────
+
+Three measured reasons, and the first is the one that decides it:
+
+1. It would be a THIRD implementation of one format — node core, coderifts-verifier, and this.
+   Two verifiers of the same bytes disagreeing is the defect this ecosystem has already paid for
+   once; a third is not a feature.
+2. ``cryptography`` is a compiled wheel. This package's install profile is ``requests`` and nothing
+   else, which is why it works on hosts that cannot build one. Most callers here talk to the API
+   and never verify anything.
+3. The capability is not missing from the ecosystem, only from this package — and pointing at the
+   package that has it is a smaller, truer thing to ship than a copy that must be kept in step.
+
+So: this entry re-derives digests, and says so. The signature answer comes from
+``coderifts-verifier`` (Python), ``@coderifts/sdk``'s ``verifyReceipt`` (Node, local), or the
+conformance CLI. **This module alone is not an offline verifier.**
 
 Exit codes: 0 every re-derivation matched · 1 a mismatch · 2 the capture could not be read.
 """
@@ -82,7 +111,22 @@ def _payload_bytes(directory: str, explicit: Optional[str]) -> Optional[bytes]:
     return None
 
 
-def verify(directory: str, payload_file: Optional[str] = None) -> Tuple[int, List[str]]:
+def cross_check_receipt(directory: str, payload_file: Optional[str] = None) -> Tuple[int, List[str]]:
+    """Re-derive the scope hash and the receipt digest from a capture's own bytes.
+
+    A BYTE-CONSISTENCY CHECK, not a verification. It proves a second implementation computes the
+    same digests from the same bytes; it reads no signature, and a capture whose every signature
+    was forged passes it.
+
+    The offline PROOF is :func:`coderifts.verify_receipt` (needs ``coderifts-sdk[verify]``).
+
+    Named separately on purpose: this used to be called ``verify``, in a package whose readers were
+    being told they could verify offline, and a name is read more often than a docstring.
+    """
+    return _cross_check(directory, payload_file)
+
+
+def _cross_check(directory: str, payload_file: Optional[str] = None) -> Tuple[int, List[str]]:
     lines: List[str] = []
     failures = 0
     skipped = 0
@@ -175,8 +219,11 @@ def verify(directory: str, payload_file: Optional[str] = None) -> Tuple[int, Lis
     lines.append("")
     lines.append("  CROSS-LANGUAGE DIGEST CHECK ONLY. No signature was verified here: this package "
                  "is requests-only and")
-    lines.append("  carries no Ed25519. Run `npx @coderifts/conformance --assurance END_TO_END` for "
-                 "the full verify.")
+    lines.append("  carries no Ed25519 — this alone is NOT an offline verifier.")
+    lines.append("  For full offline signature verification, in order of nearness:")
+    lines.append("    python  pip install coderifts-verifier   (Ed25519, offline, no CodeRifts call)")
+    lines.append("    node    @coderifts/sdk -> verifyReceipt(token, {keyring})   (local, no network)")
+    lines.append("    cli     npx @coderifts/conformance --assurance END_TO_END")
     if skipped:
         lines.append("  {} check(s) NOT RUN — reported as not run, never as passed.".format(skipped))
     return (1 if failures else 0), lines
@@ -188,7 +235,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("fixture", help="directory holding transcript.json")
     parser.add_argument("--payload", help="the authorized bytes the grant bound")
     args = parser.parse_args(argv)
-    code, lines = verify(args.fixture, args.payload)
+    code, lines = cross_check_receipt(args.fixture, args.payload)
     for line in lines:
         print(line)
     print("")
@@ -199,3 +246,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+#: Deprecated alias. `cross_check_receipt` says what this is; `verify` said what it was not.
+verify = cross_check_receipt

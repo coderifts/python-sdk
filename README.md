@@ -1,12 +1,70 @@
 # coderifts-sdk
 
-Python SDK for [CodeRifts](https://coderifts.com) — API governance for AI agents.
+## Verifying a receipt offline
 
-**v3.6.0** (ID75 + 1087 scm_token) — REST parity with `@coderifts/sdk` 3.10.0.
-Decision Spec v2 still requires top-level `preflight_mode` on preflight.
-PyPI publishes are a separate, manual flow (do not `twine upload` from this
-checkout). Offline Ed25519 verification is **not** in this package (`requests`
-only) — use `@coderifts/sdk`, `coderifts-app`, or `receipt-verifier`.
+With the `[verify]` extra this SDK is a **full offline verifier**: local Ed25519, no network, no
+API key, no call to CodeRifts.
+
+```bash
+pip install 'coderifts-sdk[verify]'
+```
+```python
+from coderifts import verify_receipt, keyring_from_document
+
+v = verify_receipt(token, keyring_from_document(keys_doc))
+if not v["valid"]:
+    raise RuntimeError(f'{v["status"]}: {v.get("reason")}')
+```
+
+The keyring is **pinned by you and never fetched**. A verifier that downloads the key it is about
+to trust has verified nothing an attacker on the path could not arrange.
+
+### Without the extra
+
+`pip install coderifts-sdk` stays **requests-only** — that install works on hosts that cannot build
+a wheel, and most callers here talk to the API and never verify anything.
+
+Calling `verify_receipt` without the extra raises `ImportError` naming it. It does **not** fall
+back to the digest cross-check: a partial check reported as a verification is worse than none,
+because it is counted as one.
+
+### `cross_check_receipt` is not a verification
+
+`cross_check_receipt(capture_dir)` (also `python -m coderifts.verify`) re-derives the **scope hash**
+and the **receipt digest** from a capture's own bytes and compares them with what the transcript
+carries. It proves a second implementation computes the same digests from the same bytes. It reads
+**no signature** — a capture whose every signature was forged passes it.
+
+### Cross-language parity, proved
+
+`verify_receipt` is checked against the node core's own 16-vector corpus — four tampered bodies, a
+wrong kid, a truncated token, garbage base64, an expired v4, a v4-as-v3 downgrade, an unsupported
+v5 — and compared with what the node core **actually returns**, not with the vectors' recorded
+expectations. Byte for byte, `valid` / `status` / `reason`, 16/16.
+
+### What a `valid: true` does not say
+
+Carried on the verdict as `does_not_prove`:
+
+- **not authorization.** A valid signature is authenticity. Whether the receipt permits the action
+  you are about to take is a different question.
+- **not revocation.** A key compromised a minute ago still verifies. No local verifier can know —
+  the server path is the only one that can, and its answer is a convenience mirror, not the proof.
+- **not one run.** This checks ONE token; "these tokens came from one run" is a property of a set
+  (`cr.evidence.root.v1`).
+
+| I want to… | Use |
+| --- | --- |
+| call the API (preflight, authorize, decisions) | this package, requests-only |
+| **verify a receipt offline, in Python** | **`verify_receipt`** — needs `[verify]` |
+| re-derive digests without crypto | `cross_check_receipt` — not a verification |
+| verify a receipt offline, in Node | `@coderifts/sdk` → `verifyReceipt(token, { keyring })` |
+| grade a whole capture | `npx @coderifts/conformance --assurance END_TO_END` |
+
+Why `cryptography` and not `pynacl`: `coderifts-verifier` — this ecosystem's dedicated Python
+verifier — already depends on `cryptography>=41`. Choosing `pynacl` would put one receipt format
+behind two crypto stacks in one ecosystem. `pynacl` is the thinner binding and that is a real
+advantage; it is not worth splitting the ecosystem's crypto for.
 
 ## Surface vs TypeScript SDK
 

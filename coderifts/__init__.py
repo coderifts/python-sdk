@@ -49,6 +49,10 @@ from .types import (
 
 __version__ = "3.5.0"
 __all__ = [
+    "verify_receipt",
+    "keyring_from_document",
+    "verify_available",
+    "cross_check_receipt",
     "CLOCK_SKEW_LEEWAY_MS",
     "CodeRifts",
     "read_decision",
@@ -76,3 +80,20 @@ __all__ = [
     "compute_scope_hash",
     "receipt_digest",
 ]
+
+# ── THE OFFLINE PROOF, and the thing that is not one ────────────────────────────────────────
+#
+# `verify_receipt` is FULL Ed25519, local, no network — and needs the extra:
+#     pip install 'coderifts-sdk[verify]'
+# Calling it without the extra raises ImportError naming the extra. It does NOT fall back to the
+# digest cross-check: a partial check reported as a verification is worse than none, because it
+# is counted as one.
+#
+# `cross_check_receipt` is the requests-only byte-consistency check. It reads no signature and
+# says so.
+from .receipt_verify import (  # noqa: E402
+    verify_receipt,
+    keyring_from_document,
+    verify_available,
+)
+from .verify import cross_check_receipt  # noqa: E402

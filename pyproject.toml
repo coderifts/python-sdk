@@ -36,6 +36,17 @@ Repository = "https://github.com/coderifts/python-sdk"
 # (test_canonical_request_parity.py). unittest / unittest.mock / json / os /
 # pathlib / ast / inspect are stdlib. `requests` is a runtime dependency.
 test = ["pytest>=7"]
+# ── THE SIGNATURE PATH IS AN EXTRA, ON PURPOSE ──────────────────────────────────────────────
+#
+# `pip install coderifts-sdk` stays requests-only — that install works on hosts that cannot build
+# a wheel, and most callers here talk to the API and never verify anything.
+# `pip install 'coderifts-sdk[verify]'` adds full local Ed25519 (coderifts.verify_receipt).
+#
+# `cryptography` over `pynacl`, measured: coderifts-verifier — this ecosystem's dedicated Python
+# verifier — already depends on cryptography>=41, and choosing pynacl here would put ONE receipt
+# format behind TWO crypto stacks inside one ecosystem. pynacl is the thinner binding and that is
+# a real advantage; it is not worth splitting the ecosystem's crypto for.
+verify = ["cryptography>=41"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
