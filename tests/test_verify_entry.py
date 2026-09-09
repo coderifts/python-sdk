@@ -80,7 +80,19 @@ def test_the_tampered_negative_PASSES_here_and_the_output_says_why():
     code, lines = verify(neg, PAYLOAD)
     assert code == 0
     body = "\n".join(lines)
-    assert "No signature was verified here" in body
+    # The boundary sentence, matched by its CLAIM rather than by its old phrasing. It used to read
+    # "No signature was verified here: this package is requests-only and carries no Ed25519" — one
+    # sentence carrying two facts, and shipping `coderifts-sdk[verify]` made the second one false
+    # while the first stayed true. The wording moved; what must hold is that THIS COMMAND still
+    # states it read no signature, and that the output no longer denies the package has Ed25519.
+    assert "No signature was verified by THIS command" in body
+    assert "carries no Ed25519" not in body, (
+        "the output still tells the reader this package has no Ed25519 — `coderifts-sdk[verify]` "
+        "ships coderifts.verify_receipt, so that is now false"
+    )
+    assert "coderifts-sdk[verify]" in body, (
+        "the output names other packages for offline verification but not the extra in this one"
+    )
     assert "npx @coderifts/conformance" in body
 
 

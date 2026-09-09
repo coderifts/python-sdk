@@ -217,10 +217,17 @@ def _cross_check(directory: str, payload_file: Optional[str] = None) -> Tuple[in
                      "authorization".format(_BAD, len(unique)))
 
     lines.append("")
-    lines.append("  CROSS-LANGUAGE DIGEST CHECK ONLY. No signature was verified here: this package "
-                 "is requests-only and")
-    lines.append("  carries no Ed25519 — this alone is NOT an offline verifier.")
+    # THE CLAIM IS ABOUT THIS COMMAND, NOT ABOUT THE PACKAGE. It used to say the package "is
+    # requests-only and carries no Ed25519". That was true until `coderifts-sdk[verify]` shipped
+    # coderifts.verify_receipt — full local Ed25519, in this same package. The command still reads
+    # no signature, which is the honest and unchanged half; the sentence had bundled the two, so
+    # fixing the package silently made the sentence false everywhere it was quoted.
+    lines.append("  CROSS-LANGUAGE DIGEST CHECK ONLY. No signature was verified by THIS command: it "
+                 "re-derives digests")
+    lines.append("  and reads no signature — this alone is NOT an offline verifier.")
     lines.append("  For full offline signature verification, in order of nearness:")
+    lines.append("    python  pip install 'coderifts-sdk[verify]'  ->  coderifts.verify_receipt "
+                 "(Ed25519, offline, no CodeRifts call)")
     lines.append("    python  pip install coderifts-verifier   (Ed25519, offline, no CodeRifts call)")
     lines.append("    node    @coderifts/sdk -> verifyReceipt(token, {keyring})   (local, no network)")
     lines.append("    cli     npx @coderifts/conformance --assurance END_TO_END")

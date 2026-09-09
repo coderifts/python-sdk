@@ -47,7 +47,25 @@ from .types import (
     PreflightMode,
 )
 
-__version__ = "3.5.0"
+# ── THE VERSION IS DERIVED, NEVER TYPED ─────────────────────────────────────────────────────
+#
+# MEASURED: this was `__version__ = "3.5.0"` while pyproject.toml and PyPI both said 3.8.0. The
+# installed wheel therefore reported a version three releases stale — and nothing failed, because
+# a hand-maintained constant agrees with itself. Every release since 3.5.0 shipped a package that
+# misidentified itself to anyone who asked it politely.
+#
+# `importlib.metadata` reads the version out of the INSTALLED DISTRIBUTION's metadata, which is
+# built from pyproject.toml. There is one source now, and it is the one the packaging tools use.
+#
+# The fallback is for a source checkout that was never installed (running from the repo root):
+# there is no distribution metadata to read, and reporting a stale number would be the original
+# defect. `0.0.0+unknown` is not a version anyone will mistake for a release.
+try:  # pragma: no cover - the installed path is the one that matters
+    from importlib.metadata import PackageNotFoundError, version as _dist_version
+
+    __version__ = _dist_version("coderifts-sdk")
+except Exception:  # noqa: BLE001 - PackageNotFoundError on a bare checkout; anything else too
+    __version__ = "0.0.0+unknown"
 __all__ = [
     "verify_receipt",
     "keyring_from_document",
