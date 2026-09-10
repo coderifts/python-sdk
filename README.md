@@ -68,7 +68,7 @@ advantage; it is not worth splitting the ecosystem's crypto for.
 
 ## Surface vs TypeScript SDK
 
-| Capability | Python | TypeScript 3.10.0 | Notes |
+| Capability | Python | TypeScript 3.14.1 | Notes |
 |------------|--------|------------------|-------|
 | `preflight_change_set` / `analyze_change_set` / `authorize_change_set` | yes | `preflightChangeSet` / `analyzeChangeSet` / `authorizeChangeSet` | `POST /api/v1/preflight` |
 | `verify_receipt` | yes | `verifyReceipt` | `POST /api/v1/verify-receipt` |
