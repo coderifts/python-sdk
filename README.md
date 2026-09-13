@@ -19,6 +19,29 @@ if not v["valid"]:
 The keyring is **pinned by you and never fetched**. A verifier that downloads the key it is about
 to trust has verified nothing an attacker on the path could not arrange.
 
+**Where the keys come from is your decision, and the SDK will not make it.**
+This package ships no embedded keyring, and neither does any CodeRifts Python
+distribution — so "obtain a trustworthy keyring" is a step you own:
+
+**Pin a file.** Fetch `.well-known/coderifts-keys.json` once, out of band,
+review it, and commit it. Load it with `keyring_from_document` and hand it in.
+The pin is then a reviewed artifact in your repository and changes only when you
+change it.
+
+There is a second copy of the same document vendored inside the npm package
+`@coderifts/conformance`, at
+`lib/vendor/receipt-verifier/keys/coderifts-keys.json`. It is the same shape and
+useful to compare against — but it is an npm package, not a Python dependency,
+so for a Python project it is a **source to copy from once**, not something to
+resolve at install time. Copying it once still leaves you with a pinned file.
+
+The boundary: pinning is a trust decision taken **once, out of band**, and this
+verifier will refuse rather than make it for you — a missing keyring is an
+error, not a fetch. What pinning cannot give you is freshness. A pinned
+key is only as current as your last review, and revocation is invisible to any
+local verifier — the server path is the only one that can see it, and its answer
+is a mirror, not a proof you hold.
+
 ### Without the extra
 
 `pip install coderifts-sdk` stays **requests-only** — that install works on hosts that cannot build
@@ -304,6 +327,18 @@ else:  # REQUEST_APPROVAL, STOP, or anything unreadable
 print it, put it in a PR comment — never branch on it. That is the agent-host
 rule `not_for_control_flow_use_execution_action`, and `@coderifts/conformance`
 ships a deliberately-wrong `branch-on-decision` subject that the suite fails.
+
+**`does_not_prove` is prose, not a class.** Every verdict carries it, and it is
+there to be read: log it, print it, put it in the PR comment beside the
+decision. It is **not** a control input, and it is a weaker thing than
+`decision` — `decision` is at least a closed set of labels, while
+`does_not_prove` is a list of sentences generated from what was actually
+measured on that call. Its wording moves when the measurement moves. Branching
+on its text, its length, or whether a particular phrase appears in it builds a
+guard on a string that was never promised to stay the same.
+
+If you need a machine-readable limit to branch on, that is a different feature
+and it is built on request — not by pattern-matching this field.
 
 Resolution order, and what falls closed:
 
