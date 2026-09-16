@@ -209,7 +209,8 @@ result = client.authorize_change_set(
         "operation": "merge",
         "environment": "staging",
     },
-    include_execution_grant=True,  # opt-in; cr.exec.v1 unless grant_version says otherwise
+    include_execution_grant=True,  # opt-in; the server's default envelope
+                                   # unless grant_version pins one
 )
 
 # The same call asking for a cr.exec.v2 grant, bound to a stated identity.
