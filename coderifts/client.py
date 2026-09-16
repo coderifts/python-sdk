@@ -285,13 +285,17 @@ class CodeRifts:
                 derivation. Sent ONLY as the ``X-Coderifts-Scm-Token`` header
                 (never in the JSON body, never stored on the client).
             include_execution_grant: Opt-in execution grant on authorize.
-                Default omitted. WHICH grant depends on ``grant_version``:
-                omitted issues ``cr.exec.v1``, ``'v2'`` issues ``cr.exec.v2``.
-                The Python client does not verify grants offline (no Ed25519
-                dependency); use the app/SDK-TS kernel.
-            grant_version: ``'v2'`` requests a ``cr.exec.v2`` grant. Omitted —
-                the default — keeps ``cr.exec.v1``, which the server still
-                issues. That is back-compat, not a deprecation.
+                Default omitted. WHICH grant the server mints when
+                ``grant_version`` is also omitted is the server's default at
+                request time — pin ``grant_version`` explicitly to control
+                this. ``'v2'`` requests ``cr.exec.v2``. The Python client does
+                not verify grants offline (no Ed25519 dependency); use the
+                app/SDK-TS kernel.
+            grant_version: ``'v1'`` / ``'v2'`` selects the grant envelope.
+                Omitted — this SDK sends no version field. The server's default
+                at request time is what is issued; the response (and any
+                deprecation / sunset headers) is the statement that cannot go
+                stale. Pin explicitly to control this.
             execution_grant_binding: The v2 identity the grant should bind, as
                 :class:`~coderifts.types.ExecutionGrantV2Request`:
                 ``executor_id`` / ``adapter_id`` / ``target_uri`` /
@@ -424,8 +428,9 @@ class CodeRifts:
         you are looking for a "sign a grant" call here, its absence is the design.
 
         Args:
-            grant_version: ``"v2"`` selects the ATOMIC-profile grant. Omitted → the server's
-                default (v1); this SDK sends no version of its own.
+            grant_version: ``"v2"`` selects the ATOMIC-profile grant. Omitted —
+                this SDK sends no version field. The server's default at request
+                time is what is issued; pin explicitly to control this.
             execution_grant_binding: The v2 identity the grant should bind. Forwarded at the
                 request's top level; unknown keys are dropped rather than sent.
             resolve_state_challenge: Zero-argument callable returning
