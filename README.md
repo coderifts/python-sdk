@@ -1,5 +1,7 @@
 # coderifts-sdk
 
+Signed, offline-verifiable authorization for AI-agent contract changes. Only a granted change can proceed.
+
 ## Verifying a receipt offline
 
 With the `[verify]` extra this SDK is a **full offline verifier**: local Ed25519, no network, no

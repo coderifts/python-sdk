@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coderifts-sdk"
-version = "3.8.1"
-description = "Signed, offline-verifiable authorization for AI-agent contract changes — Python SDK. Only a granted change can proceed."
+version = "3.8.2"
+description = "Signed, offline-verifiable authorization for AI-agent contract changes. Only a granted change can proceed."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "CodeRifts", email = "hello@coderifts.com" }]

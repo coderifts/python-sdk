@@ -2,6 +2,10 @@
 
 All notable changes to `coderifts-sdk` are documented here.
 
+## 3.8.2 - 2026-09-20
+
+- PyPI summary is the canonical product line: signed, offline-verifiable authorization for AI-agent contract changes. Only a granted change can proceed.
+
 ## Unreleased
 
 - `[project.optional-dependencies] test = ["pytest>=7"]` so a fresh venv can
